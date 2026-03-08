@@ -1,1 +1,2 @@
-# rookdb-cli
+# RookDB CLI
+
