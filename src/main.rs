@@ -1,11 +1,16 @@
 use std::io::{self, Write};
 use rook_parser::parse_sql;
 
+mod db;
+
 fn main() -> io::Result<()> {
     println!("--------------------------------------");
     println!("Welcome to RookDB");
     println!("--------------------------------------\n");
 
+    // Initialize storage manager catalog and show existing databases
+    db::initialize_and_show_catalog();
+    
     loop {
         print!("> ");
         io::stdout().flush()?;
