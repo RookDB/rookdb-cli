@@ -1,8 +1,5 @@
-
-
 use std::io::{self, Write};
 use rook_parser::parse_sql;
-use rook_parser::ast::Statement;
 
 fn main() -> io::Result<()> {
     println!("--------------------------------------");
@@ -22,18 +19,15 @@ fn main() -> io::Result<()> {
             break;
         }
 
-        match parse_sql(input) {
-            Ok(statement) => {
-                println!("{:#?}", statement);
+        if input.is_empty() {
+            continue;
+        }
 
-                match statement {
-                    Statement::Create(stmt) => println!("CREATE => {}", stmt),
-                    Statement::Select(stmt) => println!("SELECT => {}", stmt),
-                    Statement::Insert(stmt) => println!("INSERT => {}", stmt),
-                    Statement::Update(stmt) => println!("UPDATE => {}", stmt),
-                    Statement::Delete(stmt) => println!("DELETE => {}", stmt),
-                    Statement::Drop(stmt) => println!("DROP => {}", stmt),
-                    Statement::Alter(stmt) => println!("ALTER => {}", stmt),
+        match parse_sql(input) {
+            Ok(statements) => {
+                for statement in statements {
+                    println!("{:#?}", statement);
+                    println!("{}", statement);
                 }
             }
             Err(err) => {
