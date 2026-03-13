@@ -2,7 +2,7 @@
 
 - An interactive SQL CLI for RookDB that takes SQL statements as input and uses `rook-parser` and the RookDB Storage Engine to process and display results.
 
-- The input to the program is a standard SQL statement(e.g., `SHOW DATABASES`).
+- For documentation about user guide, please visit: [User Guide Docs](https://rookdb.github.io/docs/CLI)
 
 ## Getting Started
 

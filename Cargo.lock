@@ -130,6 +130,8 @@ name = "rookdb-cli"
 version = "0.1.0"
 dependencies = [
  "rook-parser",
+ "serde",
+ "serde_json",
  "storage_manager",
 ]
 
