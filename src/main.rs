@@ -8,9 +8,11 @@ fn main() -> io::Result<()> {
     println!("Welcome to RookDB");
     println!("--------------------------------------\n");
 
-    // Initialize storage manager catalog and show existing databases
-    db::initialize_and_show_catalog();
-    
+    // Initialize storage manager catalog
+    let mut catalog = db::initialize_catalog();
+
+    // show_databases(&catalog);
+
     loop {
         print!("> ");
         io::stdout().flush()?;
@@ -29,11 +31,8 @@ fn main() -> io::Result<()> {
         }
 
         match parse_sql(input) {
-            Ok(statements) => {
-                for statement in statements {
-                    println!("{:#?}", statement);
-                    println!("{}", statement);
-                }
+            Ok(json) => {
+                println!("{}", json);
             }
             Err(err) => {
                 println!("Parse error: {}", err);
