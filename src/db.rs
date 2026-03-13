@@ -1,7 +1,6 @@
-use storage_manager::catalog::{init_catalog, load_catalog, show_databases};
+use storage_manager::catalog::{Catalog, init_catalog, load_catalog};
 
-pub fn initialize_and_show_catalog() {
+pub fn initialize_catalog() -> Catalog {
     init_catalog();
-    let catalog = load_catalog();
-    show_databases(&catalog);
+    load_catalog()
 }
