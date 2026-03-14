@@ -116,9 +116,9 @@ dependencies = [
 
 [[package]]
 name = "rook-parser"
-version = "0.1.6"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac65c41a852e3577f65a6869d35e1daa98e655a0ad5adb6cfa661837c7a59953"
+checksum = "5d82fbb51ed237747edef0386c6755149329027d58e428a8f1f6f5962b5194a2"
 dependencies = [
  "serde",
  "serde_json",
