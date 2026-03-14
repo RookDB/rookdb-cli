@@ -1,6 +1,6 @@
 use rook_parser::parse_sql;
 use std::io::{self, Write};
-use storage_manager::catalog::{create_database, show_databases};
+use storage_manager::catalog::{create_database, show_databases, show_tables};
 
 mod db;
 
@@ -12,7 +12,8 @@ fn main() -> io::Result<()> {
     // Initialize storage manager catalog
     let mut catalog = db::initialize_catalog();
 
-    // show_databases(&catalog);
+    // Track current database
+    let mut current_db: Option<String> = None;
 
     loop {
         print!("> ");
@@ -45,6 +46,25 @@ fn main() -> io::Result<()> {
                     let db_name = params["database"].as_str().unwrap_or("");
                     create_database(&mut catalog, db_name);
                     println!("Database '{}' created successfully.", db_name);
+                } else if category == "DDL" && stmt_type == "USEDatabase" {
+                    let raw = params["database"].as_str().unwrap_or("");
+                    let db_name = raw.split_whitespace().last().unwrap_or("");
+
+                    current_db = Some(db_name.to_string());
+                    if catalog.databases.is_empty() {
+                        println!("No databases found.");
+                    } else if catalog.databases.contains_key(db_name) {
+                        current_db = Some(db_name.to_string());
+                        println!("Database '{}' selected.", db_name);
+                    } else {
+                        println!("Database '{}' does not exist.", db_name);
+                    }
+                } else if category == "DQL" && stmt_type == "ShowTables" {
+                    if let Some(db_name) = &current_db {
+                        show_tables(&catalog, db_name);
+                    } else {
+                        println!("No database selected. Use 'USE <database>' first.");
+                    }
                 } else {
                     println!("{}", json);
                 }
