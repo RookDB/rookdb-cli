@@ -1,6 +1,6 @@
 use rook_parser::parse_sql;
 use std::io::{self, Write};
-use storage_manager::catalog::{create_database, show_databases, show_tables};
+use storage_manager::catalog::{create_database, create_table, show_databases, show_tables};
 
 mod db;
 
@@ -65,6 +65,31 @@ fn main() -> io::Result<()> {
                     } else {
                         println!("No database selected. Use 'USE <database>' first.");
                     }
+                } else if category == "DDL" && stmt_type == "CreateTable" {
+                    let db = match &current_db {
+                        Some(db) => db.clone(),
+                        None => {
+                            println!("No database selected. Use 'USE <database>' first.");
+                            continue;
+                        }
+                    };
+
+                    let table_name = params["table"].as_str().unwrap_or("");
+
+                    let mut columns = Vec::new();
+
+                    if let Some(cols) = params["columns"].as_array() {
+                        for col in cols {
+                            let name = col["name"].as_str().unwrap_or("").to_string();
+                            let data_type = col["data_type"].as_str().unwrap_or("").to_string();
+
+                            columns.push(storage_manager::catalog::Column { name, data_type });
+                        }
+                    }
+
+                    create_table(&mut catalog, &db, table_name, columns);
+
+                    println!("Table '{}' created successfully.", table_name);
                 } else {
                     println!("{}", json);
                 }
