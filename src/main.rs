@@ -1,6 +1,9 @@
 use rook_parser::parse_sql;
 use std::io::{self, Write};
+use std::str::FromStr;
 use storage_manager::catalog::{create_database, create_table, show_databases, show_tables};
+use storage_manager::catalog::{Column, Constraints};
+use storage_manager::types::DataType;
 
 mod db;
 
@@ -81,9 +84,38 @@ fn main() -> io::Result<()> {
                     if let Some(cols) = params["columns"].as_array() {
                         for col in cols {
                             let name = col["name"].as_str().unwrap_or("").to_string();
-                            let data_type = col["data_type"].as_str().unwrap_or("").to_string();
 
-                            columns.push(storage_manager::catalog::Column { name, data_type });
+                            let data_type_str = col["data_type"].as_str().unwrap_or("").trim();
+
+                            let data_type = match DataType::from_str(data_type_str) {
+                                Ok(dt) => dt,
+                                Err(err) => {
+                                    println!(
+            "Unknown type '{}': {}. Supported: SMALLINT, INT, BIGINT, REAL, DOUBLE PRECISION, NUMERIC(p,s), DECIMAL(p,s), BOOLEAN, CHAR(n), CHARACTER(n), VARCHAR(n), DATE, TIME, TIMESTAMP, BIT(n)",
+            data_type_str,
+            err
+        );
+                                    continue;
+                                }
+                            };
+
+                            let nullable = col["nullable"].as_bool().unwrap_or(true);
+
+                            let constraints = Constraints {
+                                not_null: col["constraints"]["not_null"].as_bool().unwrap_or(false),
+
+                                unique: col["constraints"]["unique"].as_bool().unwrap_or(false),
+
+                                default: None,
+                                check: None,
+                            };
+
+                            columns.push(Column {
+                                name,
+                                data_type,
+                                nullable,
+                                constraints,
+                            });
                         }
                     }
 
