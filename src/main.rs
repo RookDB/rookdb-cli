@@ -190,6 +190,82 @@ fn main() -> io::Result<()> {
                             println!("SELECT error: {}", e);
                         }
                     }
+                } else if category == "DML" && stmt_type == "Update" {
+                    let db = match &current_db {
+                        Some(db) => db,
+                        None => {
+                            println!("No database selected. Use 'USE <database>' first.");
+                            continue;
+                        }
+                    };
+
+                    // Extract table name from params
+                    let table = params["table"].as_str().unwrap_or("");
+
+                    if table.is_empty() {
+                        println!("No table specified in UPDATE query.");
+                        continue;
+                    }
+
+                    // Extract SET clause
+                    let assignments = params["assignments"]
+                        .as_array()
+                        .and_then(|a| a.first())
+                        .and_then(|a| a.as_str())
+                        .unwrap_or("");
+
+                    if assignments.is_empty() {
+                        println!("No SET clause in UPDATE query.");
+                        continue;
+                    }
+
+                    // Extract WHERE clause if it exists
+                    let where_clause = params["filters"]
+                        .as_array()
+                        .and_then(|f| f.first())
+                        .and_then(|f| f.as_str());
+
+                    // Execute UPDATE
+                    match db::execute_update(&catalog, db, table, assignments, where_clause) {
+                        Ok(_) => {
+                            // Output already printed by execute_update
+                        }
+                        Err(e) => {
+                            println!("UPDATE error: {}", e);
+                        }
+                    }
+                } else if category == "DML" && stmt_type == "Delete" {
+                    let db = match &current_db {
+                        Some(db) => db,
+                        None => {
+                            println!("No database selected. Use 'USE <database>' first.");
+                            continue;
+                        }
+                    };
+
+                    // Extract table name from params
+                    let table = params["table"].as_str().unwrap_or("");
+
+                    if table.is_empty() {
+                        println!("No table specified in DELETE query.");
+                        continue;
+                    }
+
+                    // Extract WHERE clause if it exists
+                    let where_clause = params["filters"]
+                        .as_array()
+                        .and_then(|f| f.first())
+                        .and_then(|f| f.as_str());
+
+                    // Execute DELETE
+                    match db::execute_delete(&catalog, db, table, where_clause) {
+                        Ok(_) => {
+                            // Output already printed by execute_delete
+                        }
+                        Err(e) => {
+                            println!("DELETE error: {}", e);
+                        }
+                    }
                 } else {
                     println!("{}", json);
                 }
