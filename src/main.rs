@@ -124,48 +124,75 @@ fn main() -> io::Result<()> {
 
                     println!("Table '{}' created successfully.", table_name);
                 } else if category == "DML" && stmt_type == "Insert" {
-                let db = match &current_db {
-                    Some(db) => db,
-                    None => {
-                        println!("No database selected. Use 'USE <database>' first.");
-                        continue;
-                    }
-                };
+                    let db = match &current_db {
+                        Some(db) => db,
+                        None => {
+                            println!("No database selected. Use 'USE <database>' first.");
+                            continue;
+                        }
+                    };
 
-                let table_name = params["table"].as_str().unwrap_or("");
+                    let table_name = params["table"].as_str().unwrap_or("");
 
-                if let Some(rows) = params["values"].as_array() {
-                    for row in rows {
-                        if let Some(values_array) = row.as_array() {
-                            let values: Vec<&str> = values_array
-                                .iter()
-                                .filter_map(|v| v.as_str())
-                                .collect();
+                    if let Some(rows) = params["values"].as_array() {
+                        for row in rows {
+                            if let Some(values_array) = row.as_array() {
+                                let values: Vec<&str> =
+                                    values_array.iter().filter_map(|v| v.as_str()).collect();
 
-                            match insert_single_tuple(
-                                &catalog,
-                                db,
-                                table_name,
-                                &values,
-                            ) {
-                                Ok(true) => {
-                                    println!("1 row inserted.");
-                                }
-                                Ok(false) => {
-                                    println!("Insert failed.");
-                                }
-                                Err(e) => {
-                                    println!("Insert error: {}", e);
+                                match insert_single_tuple(&catalog, db, table_name, &values) {
+                                    Ok(true) => {
+                                        println!("1 row inserted.");
+                                    }
+                                    Ok(false) => {
+                                        println!("Insert failed.");
+                                    }
+                                    Err(e) => {
+                                        println!("Insert error: {}", e);
+                                    }
                                 }
                             }
                         }
                     }
-                }
-            }
-                else {
+                } else if category == "DQL" && stmt_type == "Select" {
+                    let db = match &current_db {
+                        Some(db) => db,
+                        None => {
+                            println!("No database selected. Use 'USE <database>' first.");
+                            continue;
+                        }
+                    };
+
+                    // Extract table name from params
+                    let tables = params["tables"]
+                        .as_array()
+                        .and_then(|t| t.first())
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("");
+
+                    if tables.is_empty() {
+                        println!("No table specified in SELECT query.");
+                        continue;
+                    }
+
+                    // Extract WHERE clause if it exists
+                    let where_clause = params["filters"]
+                        .as_array()
+                        .and_then(|f| f.first())
+                        .and_then(|f| f.as_str());
+
+                    // Execute SELECT
+                    match db::execute_select(&catalog, db, tables, where_clause) {
+                        Ok(_) => {
+                            // Output already printed by execute_select
+                        }
+                        Err(e) => {
+                            println!("SELECT error: {}", e);
+                        }
+                    }
+                } else {
                     println!("{}", json);
                 }
-                
             }
             Err(err) => {
                 println!("Parse error: {}", err);
