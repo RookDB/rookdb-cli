@@ -2,9 +2,60 @@
 name = "rookdb-cli"
 version = "0.1.0"
 edition = "2024"
+authors = ["RookDB"]
+description = "An interactive SQL CLI for RookDB — query your database from the terminal"
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/RookDB/rookdb-cli"
+homepage = "https://rookdb.github.io/docs/CLI"
+keywords = ["database", "sql", "cli", "rookdb", "repl"]
+categories = ["command-line-utilities", "database"]
+
+[[bin]]
+name = "rookdb"
+path = "src/main.rs"
 
 [dependencies]
 rook-parser = "0.2.0"
 storage_manager = "0.2.1"
 serde_json = "1.0.150"
 serde = "1.0.228"
+
+# ──────────────────────────────────────────────
+# cargo-dist configuration
+# Generates release artifacts + installers for
+# macOS (Homebrew), Linux (shell), Windows (PowerShell + MSI)
+# ──────────────────────────────────────────────
+[workspace.metadata.dist]
+# The version of cargo-dist that generated this config
+cargo-dist-version = "0.32.0"
+
+# Trigger a release whenever a tag matching v* is pushed
+tag-namespace = "v"
+
+# Installers to produce for each release
+installers = ["shell", "powershell", "homebrew", "msi"]
+
+# Target triples to build for
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+
+# Push the Homebrew formula to this tap after every release
+tap = "RookDB/homebrew-tap"
+
+# GitHub Releases is the hosting backend
+hosting = ["github"]
+
+# Run the Homebrew publish job in CI
+publish-jobs = ["homebrew"]
+
+# Create a universal macOS binary (fat binary combining x86_64 + aarch64)
+macos-minimum-version = "11.0"
+
+# Include the CI workflow file in the repo
+ci = ["github"]
