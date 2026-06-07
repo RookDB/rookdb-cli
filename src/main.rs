@@ -3,6 +3,7 @@ use std::io::{self, Write};
 use std::str::FromStr;
 use storage_manager::catalog::{create_database, create_table, show_databases, show_tables};
 use storage_manager::catalog::{Column, Constraints};
+use storage_manager::insert_single_tuple;
 use storage_manager::types::DataType;
 
 mod db;
@@ -122,9 +123,49 @@ fn main() -> io::Result<()> {
                     create_table(&mut catalog, &db, table_name, columns);
 
                     println!("Table '{}' created successfully.", table_name);
-                } else {
+                } else if category == "DML" && stmt_type == "Insert" {
+                let db = match &current_db {
+                    Some(db) => db,
+                    None => {
+                        println!("No database selected. Use 'USE <database>' first.");
+                        continue;
+                    }
+                };
+
+                let table_name = params["table"].as_str().unwrap_or("");
+
+                if let Some(rows) = params["values"].as_array() {
+                    for row in rows {
+                        if let Some(values_array) = row.as_array() {
+                            let values: Vec<&str> = values_array
+                                .iter()
+                                .filter_map(|v| v.as_str())
+                                .collect();
+
+                            match insert_single_tuple(
+                                &catalog,
+                                db,
+                                table_name,
+                                &values,
+                            ) {
+                                Ok(true) => {
+                                    println!("1 row inserted.");
+                                }
+                                Ok(false) => {
+                                    println!("Insert failed.");
+                                }
+                                Err(e) => {
+                                    println!("Insert error: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+                else {
                     println!("{}", json);
                 }
+                
             }
             Err(err) => {
                 println!("Parse error: {}", err);
