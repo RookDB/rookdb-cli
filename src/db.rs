@@ -1,10 +1,13 @@
 use std::fs::OpenOptions;
 use std::path::Path;
 
-use storage_manager::catalog::{init_catalog, load_catalog, Catalog};
+use storage_manager::catalog::{Catalog, Column, init_catalog, load_catalog};
 use storage_manager::disk::read_page;
-use storage_manager::executor::selection::{filter_tuples, SelectionExecutor};
-use storage_manager::page::{Page, ITEM_ID_SIZE, PAGE_HEADER_SIZE};
+use storage_manager::executor::selection::{SelectionExecutor, filter_tuples};
+use storage_manager::executor::{
+    delete_tuples, parse_set_clause, parse_where_clause_with_schema, update_tuples,
+};
+use storage_manager::page::{ITEM_ID_SIZE, PAGE_HEADER_SIZE, Page};
 use storage_manager::query::build_predicate_from_sql;
 use storage_manager::table::page_count;
 use storage_manager::types::deserialize_nullable_row;
@@ -138,4 +141,122 @@ pub fn execute_select(
 
     println!("\n=== End of tuples (found {}) ===\n", matching.len());
     Ok(())
+}
+
+/// Execute an UPDATE query
+pub fn execute_update(
+    catalog: &Catalog,
+    db: &str,
+    table: &str,
+    set_clause: &str,
+    where_clause: Option<&str>,
+) -> Result<(), String> {
+    // Validate database and table exist
+    let db_obj = catalog
+        .databases
+        .get(db)
+        .ok_or_else(|| format!("Database '{}' not found", db))?;
+
+    let table_schema = db_obj
+        .tables
+        .get(table)
+        .ok_or_else(|| format!("Table '{}' not found in database '{}'", table, db))?;
+
+    // Parse SET clause
+    let assignments =
+        parse_set_clause(set_clause).ok_or_else(|| "Could not parse SET clause".to_string())?;
+
+    if assignments.is_empty() {
+        return Err("No assignments in SET clause".to_string());
+    }
+
+    // Parse WHERE clause if provided
+    let columns: Vec<Column> = table_schema.columns.clone();
+    let where_str = where_clause.unwrap_or("");
+    let condition_groups = if where_str.is_empty() {
+        vec![]
+    } else {
+        parse_where_clause_with_schema(where_str, &columns)
+            .ok_or_else(|| "Could not parse WHERE clause".to_string())?
+    };
+
+    // Check if table file exists
+    let path = format!("database/base/{}/{}.dat", db, table);
+    if !Path::new(&path).exists() {
+        return Err(format!("Table file not found: '{}'", path));
+    }
+
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("Failed to open table file: {}", e))?;
+
+    // Execute UPDATE
+    match update_tuples(
+        catalog,
+        db,
+        table,
+        &mut file,
+        &assignments,
+        &condition_groups,
+        false,
+    ) {
+        Ok(result) => {
+            println!("\nUpdated {} row(s).", result.updated_count);
+            Ok(())
+        }
+        Err(e) => Err(format!("Update failed: {}", e)),
+    }
+}
+
+/// Execute a DELETE query
+pub fn execute_delete(
+    catalog: &Catalog,
+    db: &str,
+    table: &str,
+    where_clause: Option<&str>,
+) -> Result<(), String> {
+    // Validate database and table exist
+    let db_obj = catalog
+        .databases
+        .get(db)
+        .ok_or_else(|| format!("Database '{}' not found", db))?;
+
+    let table_schema = db_obj
+        .tables
+        .get(table)
+        .ok_or_else(|| format!("Table '{}' not found in database '{}'", table, db))?;
+
+    // Parse WHERE clause if provided
+    let columns: Vec<Column> = table_schema.columns.clone();
+    let where_str = where_clause.unwrap_or("");
+    let condition_groups = if where_str.is_empty() {
+        // No WHERE clause => delete all rows
+        vec![]
+    } else {
+        parse_where_clause_with_schema(where_str, &columns)
+            .ok_or_else(|| "Could not parse WHERE clause".to_string())?
+    };
+
+    // Check if table file exists
+    let path = format!("database/base/{}/{}.dat", db, table);
+    if !Path::new(&path).exists() {
+        return Err(format!("Table file not found: '{}'", path));
+    }
+
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("Failed to open table file: {}", e))?;
+
+    // Execute DELETE
+    match delete_tuples(catalog, db, table, &mut file, &condition_groups, false) {
+        Ok(result) => {
+            println!("\nDeleted {} row(s).", result.deleted_count);
+            Ok(())
+        }
+        Err(e) => Err(format!("Delete failed: {}", e)),
+    }
 }
