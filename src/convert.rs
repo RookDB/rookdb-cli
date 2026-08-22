@@ -131,12 +131,6 @@ fn expr_node_to_debug_string(node: &ExprNode) -> String {
     }
 }
 
-/// Render an expression back to SQL text (used for `SET col = <expr>`
-/// reconstruction until the query engine consumes typed expressions).
-pub fn expr_to_sql_string(node: &ExprNode) -> String {
-    expr_node_to_debug_string(node)
-}
-
 /// Convert a `ConstantValue` into a raw string value (for backward compat
 /// with functions like `insert_single_tuple` that accept `&[&str]`).
 pub fn constant_to_raw_string(cv: &ConstantValue) -> String {

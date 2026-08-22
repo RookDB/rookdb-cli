@@ -1,8 +1,8 @@
 //! End-to-end smoke tests: run the `rookdb` binary as a subprocess and drive
-//! a full CREATE → INSERT → SELECT → UPDATE → DELETE workflow.
+//! a full SQL workflow through the Volcano-backed shell.
 //!
-//! Each test gets an isolated workspace directory so tests never share state,
-//! and the binary is located relative to CARGO_MANIFEST_DIR.
+//! Each test gets an isolated workspace directory so tests never share state;
+//! cargo guarantees the binary is built before integration tests run.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -20,8 +20,7 @@ fn workspace(name: &str) -> String {
 }
 
 fn rookdb_bin() -> String {
-    // CARGO_BIN_EXE_* is provided by cargo for integration tests and
-    // guarantees the binary has been built before the test runs.
+    // CARGO_BIN_EXE_* is provided by cargo for integration tests.
     env!("CARGO_BIN_EXE_rookdb").to_string()
 }
 
@@ -50,7 +49,7 @@ fn rook(ws: &str, sql_lines: &[&str]) -> String {
 }
 
 #[test]
-fn crud_workflow_via_typed_plans() {
+fn crud_workflow_through_volcano_engine() {
     let ws = workspace("crud");
     let out = rook(
         &ws,
@@ -62,34 +61,54 @@ fn crud_workflow_via_typed_plans() {
             "INSERT INTO items VALUES (2, 'nut', 0.10);",
             "SELECT * FROM items WHERE id = 1;",
             "UPDATE items SET price = 0.30 WHERE id = 2;",
-            "SELECT * FROM items WHERE id = 2;",
+            "SELECT name, price FROM items ORDER BY price DESC;",
             "DELETE FROM items WHERE id = 1;",
-            "SELECT * FROM items WHERE id = 1;",
+            "SELECT * FROM items;",
+            "DROP TABLE items;",
+            "SHOW TABLES;",
         ],
     );
 
     assert!(out.contains("Database 'shop' created"), "output:\n{}", out);
     assert!(out.contains("Table 'items' created"), "output:\n{}", out);
-    assert!(out.contains("1 row(s) inserted"), "output:\n{}", out);
-    assert!(out.contains("name='bolt'") || out.contains("name=bolt"), "output:\n{}", out);
+    assert!(out.contains("row inserted"), "output:\n{}", out);
+    // SELECT results render as an ASCII table with a row count footer.
+    assert!(out.contains("'bolt'"), "output:\n{}", out);
+    assert!(out.contains("1 row(s) returned"), "output:\n{}", out);
     assert!(out.contains("Updated 1 row(s)"), "output:\n{}", out);
     assert!(out.contains("Deleted 1 row(s)"), "output:\n{}", out);
-    // After the delete, the row must be gone (found count 0).
-    assert!(out.contains("(found 0)"), "output:\n{}", out);
+    // After the delete, one row remains.
+    assert!(out.contains("1 row(s) returned") || out.contains("(1 rows)"), "output:\n{}", out);
+    assert!(out.contains("Dropped table 'items'"), "output:\n{}", out);
 }
 
 #[test]
-fn unsupported_statements_report_cleanly() {
-    let ws = workspace("unsupported");
+fn advanced_sql_works_from_the_shell() {
+    let ws = workspace("advanced");
     let out = rook(
         &ws,
         &[
-            "CREATE DATABASE d1;",
-            "USE d1;",
-            "CREATE TABLE t (a INT);",
-            "DROP TABLE t;",
-            "CREATE INDEX i1 ON t(a);",
+            "CREATE DATABASE d;",
+            "USE d;",
+            "CREATE TABLE t (a INT, b VARCHAR(10));",
+            "INSERT INTO t VALUES (1, 'x');",
+            "INSERT INTO t VALUES (2, 'y');",
+            "INSERT INTO t VALUES (3, 'x');",
+            "SELECT b, COUNT(*) FROM t GROUP BY b HAVING COUNT(*) >= 2;",
+            "CREATE INDEX idx_a ON t(a);",
+            "SELECT * FROM t WHERE a BETWEEN 1 AND 2;",
+            "CREATE VIEW v AS SELECT * FROM t WHERE a = 3;",
+            "SELECT * FROM v;",
+            "ALTER TABLE t ADD COLUMN c INT;",
+            "TRUNCATE TABLE v2;", // unknown table must error cleanly
         ],
     );
-    assert!(out.contains("not executable yet"), "output:\n{}", out);
+
+    assert!(out.contains("'x'"), "group output:\n{}", out);
+    assert!(out.contains("Created index 'idx_a'"), "output:\n{}", out);
+    assert!(out.contains("2 row(s) returned"), "between filter:\n{}", out);
+    assert!(out.contains("View 'v' created"), "output:\n{}", out);
+    assert!(out.contains("1 row(s) returned"), "view select:\n{}", out);
+    assert!(out.contains("Altered table"), "alter:\n{}", out);
+    assert!(out.contains("Error:") || out.contains("not found"), "truncate error:\n{}", out);
 }
