@@ -112,3 +112,54 @@ fn advanced_sql_works_from_the_shell() {
     assert!(out.contains("Altered table"), "alter:\n{}", out);
     assert!(out.contains("Error:") || out.contains("not found"), "truncate error:\n{}", out);
 }
+
+#[test]
+fn statements_may_span_multiple_lines() {
+    let ws = workspace("multiline");
+    let out = rook(
+        &ws,
+        &[
+            // One CREATE TABLE spread over four lines:
+            "CREATE DATABASE ml;",
+            "USE ml;",
+            "CREATE TABLE t (",
+            "  id INT,",
+            "  name VARCHAR(30)",
+            ");",
+            // Two INSERTs sharing a single line:
+            "INSERT INTO t VALUES (1, 'a'); INSERT INTO t VALUES (2, 'b');",
+            // A comment line must not swallow the next statement...
+            "-- fetching the second row",
+            "SELECT id FROM t WHERE name = 'b';",
+            // ...and semicolons inside string literals are not terminators:
+            "SELECT 'semi;colon' AS s;",
+        ],
+    );
+
+    assert!(out.contains("Table 't' created"), "output:\n{}", out);
+    assert_eq!(
+        out.matches("row inserted").count(),
+        2,
+        "both inserts ran: {}",
+        out
+    );
+    assert!(out.contains("1 row(s) returned"), "select after comment:\n{}", out);
+    assert!(out.contains("'semi;colon'"), "semicolon in string:\n{}", out);
+}
+
+#[test]
+fn exit_only_applies_when_typed_alone() {
+    let ws = workspace("exitword");
+    let out = rook(
+        &ws,
+        &[
+            "CREATE DATABASE ex;",
+            "USE ex;",
+            "CREATE TABLE exits (id INT);",
+            "INSERT INTO exits VALUES (1);",
+            "SELECT * FROM exits;",
+        ],
+    );
+    // The word 'exit' never appears as a bare command; every statement runs.
+    assert!(out.contains("1 row(s) returned"), "output:\n{}", out);
+}
