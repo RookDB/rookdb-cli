@@ -7,20 +7,10 @@
 //! Run with: cargo build -p rookdb-cli
 //!           cargo test --test index_acceleration -- --test-threads=1
 
+mod common;
+
 use std::io::Write;
 use std::process::{Command, Stdio};
-
-fn workspace(name: &str) -> String {
-    let dir = format!(
-        "{}/database_idxaccel_{}_{}",
-        env!("CARGO_MANIFEST_DIR"),
-        std::process::id(),
-        name
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
 
 fn rookdb_bin() -> String {
     env!("CARGO_BIN_EXE_rookdb").to_string()
@@ -49,8 +39,8 @@ fn rook(ws: &str, sql_lines: &[&str]) -> String {
     )
 }
 
-fn setup(name: &str) -> String {
-    let ws = workspace(name);
+fn setup(name: &str) -> common::Workspace {
+    let ws = common::Workspace::new(name);
     let out = rook(
         &ws,
         &[

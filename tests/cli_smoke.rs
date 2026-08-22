@@ -4,20 +4,10 @@
 //! Each test gets an isolated workspace directory so tests never share state;
 //! cargo guarantees the binary is built before integration tests run.
 
+mod common;
+
 use std::io::Write;
 use std::process::{Command, Stdio};
-
-fn workspace(name: &str) -> String {
-    let dir = format!(
-        "{}/database_cli_smoke_{}_{}",
-        env!("CARGO_MANIFEST_DIR"),
-        std::process::id(),
-        name
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
 
 fn rookdb_bin() -> String {
     // CARGO_BIN_EXE_* is provided by cargo for integration tests.
@@ -50,7 +40,7 @@ fn rook(ws: &str, sql_lines: &[&str]) -> String {
 
 #[test]
 fn crud_workflow_through_volcano_engine() {
-    let ws = workspace("crud");
+    let ws = common::Workspace::new("crud");
     let out = rook(
         &ws,
         &[
@@ -84,7 +74,7 @@ fn crud_workflow_through_volcano_engine() {
 
 #[test]
 fn advanced_sql_works_from_the_shell() {
-    let ws = workspace("advanced");
+    let ws = common::Workspace::new("advanced");
     let out = rook(
         &ws,
         &[
@@ -115,7 +105,7 @@ fn advanced_sql_works_from_the_shell() {
 
 #[test]
 fn statements_may_span_multiple_lines() {
-    let ws = workspace("multiline");
+    let ws = common::Workspace::new("multiline");
     let out = rook(
         &ws,
         &[
@@ -149,7 +139,7 @@ fn statements_may_span_multiple_lines() {
 
 #[test]
 fn exit_only_applies_when_typed_alone() {
-    let ws = workspace("exitword");
+    let ws = common::Workspace::new("exitword");
     let out = rook(
         &ws,
         &[

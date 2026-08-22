@@ -18,11 +18,10 @@
 //!   cargo build -p rookdb-cli
 //!   cargo test --test test_bug_fixes -- --test-threads=1
 
-use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{LazyLock, Mutex, atomic::{AtomicU64, Ordering}};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // ── Test Infrastructure ────────────────────────────────────────────────────────
 //
@@ -78,10 +77,16 @@ impl std::ops::Deref for WorkspaceGuard {
     }
 }
 
-/// Stores workspace guards keyed by thread ID. Each concurrent test thread
-/// gets its own entry, preventing cross-thread workspace overwrites.
-static WORKSPACE_MAP: LazyLock<Mutex<HashMap<std::thread::ThreadId, WorkspaceGuard>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+// The active workspace for the current test thread.
+//
+// Thread-local storage (not a static map) is what makes cleanup actually
+// happen: TLS values are dropped when the test thread finishes — panic or
+// not — whereas values parked in a `static` are never dropped at process
+// exit, which used to leak one workspace directory per test.
+thread_local! {
+    static ACTIVE_WORKSPACE: std::cell::RefCell<Option<WorkspaceGuard>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 /// Initialise the test suite: clean up any leftover workspace directories from
 /// previous test runs (even crashed ones).  Runs exactly once per test binary
@@ -157,33 +162,38 @@ fn clean_db() {
     assert!(!warmup.contains("error"),
         "System table warm-up failed:\n{}", warmup);
 
-    // Store the guard keyed by the current thread's ID.
-    // The old guard for this thread is dropped (cleaning its old workspace),
-    // but guards for OTHER threads are NOT touched.
-    WORKSPACE_MAP.lock().unwrap().insert(std::thread::current().id(), guard);
+    // Install as this thread's active workspace. Assigning None first drops
+    // any previous guard for THIS thread (removing that older workspace);
+    // guards for other threads are not touched.
+    ACTIVE_WORKSPACE.with(|slot| {
+        *slot.borrow_mut() = None;
+        *slot.borrow_mut() = Some(guard);
+    });
 }
 
 /// Run one or more SQL statements in a single CLI session.
 fn rook(sql: &str) -> String {
     // Clone the path while holding the lock, then release
-    let workspace_path = {
-        let map = WORKSPACE_MAP.lock().unwrap();
-        let guard = map.get(&std::thread::current().id())
-            .expect("clean_db() must be called before rook()");
-        guard.path.clone()
-    };
+    let workspace_path = ACTIVE_WORKSPACE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("clean_db() must be called before rook()")
+            .path
+            .clone()
+    });
     run_cli_in(&workspace_path, sql)
 }
 
 /// Run one or more SQL statements in a single CLI session, expecting an exit failure.
 #[allow(dead_code)]
 fn rook_err(sql: &str) -> String {
-    let workspace_path = {
-        let map = WORKSPACE_MAP.lock().unwrap();
-        let guard = map.get(&std::thread::current().id())
-            .expect("clean_db() must be called before rook_err()");
-        guard.path.clone()
-    };
+    let workspace_path = ACTIVE_WORKSPACE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("clean_db() must be called before rook_err()")
+            .path
+            .clone()
+    });
     
     let mut child = Command::new(rookdb_bin())
         .current_dir(&workspace_path)
