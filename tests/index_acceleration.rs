@@ -1,108 +1,206 @@
 //! Index-acceleration end-to-end tests.
 //!
-//! With an index present, the physical planner rewrites equality, BETWEEN,
-//! single-element IN and inequality predicates into PointLookup / RangeLookup
-//! scans instead of SeqScan+Filter.
+//! Two guarantees are pinned down per predicate form:
 //!
-//! Run with: cargo build -p rookdb-cli
-//!           cargo test --test index_acceleration -- --test-threads=1
+//! 1. **Exact results** — parsed cell-by-cell from the rendered table,
+//!    including row order where the B+ Tree defines it (ascending key,
+//!    leaf-link traversal).
+//! 2. **Path equivalence** — an identical table *without* an index must
+//!    produce byte-identical result sets through the SeqScan+Filter path.
+//!
+//! Run with: cargo test --test index_acceleration -- --test-threads=1
 
 mod common;
 
-use std::io::Write;
-use std::process::{Command, Stdio};
+use common::{expect_rows, run, Workspace};
 
-fn rookdb_bin() -> String {
-    env!("CARGO_BIN_EXE_rookdb").to_string()
-}
+/// emp(id, name, salary) — six rows, `salary = 62000` duplicated.
+const SETUP: &[&str] = &[
+    "CREATE DATABASE pay;",
+    "USE pay;",
+    "CREATE TABLE emp (id INT, name VARCHAR(20), salary INT);",
+    "INSERT INTO emp VALUES (1, 'Ann', 50000);",
+    "INSERT INTO emp VALUES (2, 'Ben', 62000);",
+    "INSERT INTO emp VALUES (3, 'Cy', 75000);",
+    "INSERT INTO emp VALUES (4, 'Dee', 91000);",
+    "INSERT INTO emp VALUES (5, 'Eve', 48000);",
+    "INSERT INTO emp VALUES (6, 'Fay', 62000);",
+];
 
-fn rook(ws: &str, sql_lines: &[&str]) -> String {
-    let mut child = Command::new(rookdb_bin())
-        .current_dir(ws)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn rookdb");
-    {
-        let stdin = child.stdin.as_mut().unwrap();
-        for line in sql_lines {
-            writeln!(stdin, "{}", line).unwrap();
-        }
-        writeln!(stdin, "exit").unwrap();
-    }
-    let out = child.wait_with_output().unwrap();
-    format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    )
-}
+/// Same table again, but WITHOUT an index — the sequential baseline.
+const SETUP_NO_INDEX: &[&str] = &[
+    "CREATE DATABASE pay2;",
+    "USE pay2;",
+    "CREATE TABLE emp (id INT, name VARCHAR(20), salary INT);",
+    "INSERT INTO emp VALUES (1, 'Ann', 50000);",
+    "INSERT INTO emp VALUES (2, 'Ben', 62000);",
+    "INSERT INTO emp VALUES (3, 'Cy', 75000);",
+    "INSERT INTO emp VALUES (4, 'Dee', 91000);",
+    "INSERT INTO emp VALUES (5, 'Eve', 48000);",
+    "INSERT INTO emp VALUES (6, 'Fay', 62000);",
+];
 
-fn setup(name: &str) -> common::Workspace {
-    let ws = common::Workspace::new(name);
-    let out = rook(
+fn ws_with_index(name: &str) -> Workspace {
+    let ws = Workspace::new(name);
+    let out = run(
         &ws,
-        &[
-            "CREATE DATABASE pay;",
-            "USE pay;",
-            "CREATE TABLE emp (id INT, name VARCHAR(30), salary INT);",
-            "INSERT INTO emp VALUES (1,'Ann',50000);",
-            "INSERT INTO emp VALUES (2,'Ben',62000);",
-            "INSERT INTO emp VALUES (3,'Cy',75000);",
-            "INSERT INTO emp VALUES (4,'Dee',91000);",
-            "CREATE INDEX by_salary ON emp(salary);",
-        ],
+        &[SETUP, &["CREATE INDEX by_salary ON emp(salary);"]].concat(),
     );
-    assert!(out.contains("Created index"), "setup failed:\n{}", out);
+    assert!(
+        out.contains("Created index"),
+        "setup failed:\n{}",
+        out
+    );
     ws
 }
 
+// ── Exact result sets through the index ──────────────────────────────────────
+
 #[test]
-fn between_uses_the_index() {
-    let ws = setup("between");
-    let out = rook(
+fn point_lookup_returns_exact_row() {
+    let ws = ws_with_index("point");
+    expect_rows(
         &ws,
-        &["USE pay;", "SELECT name FROM emp WHERE salary BETWEEN 50000 AND 80000;"],
+        &["USE pay;"],
+        "SELECT name FROM emp WHERE salary = 91000;",
+        &[
+            &["'Dee'"],
+        ],
     );
-    // Bounds are inclusive: Ann (50k), Ben (62k), Cy (75k) match.
-    assert!(out.contains("3 row(s) returned"), "output:\n{}", out);
-    assert!(out.contains("'Ann'") && out.contains("'Ben'") && out.contains("'Cy'"),
-            "output:\n{}", out);
-    assert!(!out.contains("'Dee'"), "Dee must be excluded:\n{}", out);
 }
 
 #[test]
-fn greater_than_is_range_accelerated() {
-    let ws = setup("gt");
-    let out = rook(&ws, &["USE pay;", "SELECT name FROM emp WHERE salary > 70000;"]);
-    assert!(out.contains("2 row(s) returned"), "output:\n{}", out);
-    assert!(out.contains("'Cy'") && out.contains("'Dee'"), "output:\n{}", out);
-}
-
-#[test]
-fn less_than_equal_is_range_accelerated() {
-    let ws = setup("le");
-    let out = rook(&ws, &["USE pay;", "SELECT name FROM emp WHERE salary <= 62000;"]);
-    assert!(out.contains("2 row(s) returned"), "output:\n{}", out);
-    assert!(out.contains("'Ann'") && out.contains("'Ben'"), "output:\n{}", out);
-}
-
-#[test]
-fn and_range_combines_into_one_interval() {
-    let ws = setup("andrange");
-    let out = rook(
+fn point_lookup_with_duplicate_keys_returns_all_matches() {
+    let ws = ws_with_index("dup");
+    // Non-unique index: BOTH rows share 62000 and must come back.
+    // Leaf insertion order among equal keys follows insert order.
+    expect_rows(
         &ws,
-        &["USE pay;", "SELECT name FROM emp WHERE salary > 50000 AND salary < 91000;"],
+        &["USE pay;"],
+        "SELECT name FROM emp WHERE salary = 62000;",
+        &[
+            &["'Ben'"],
+            &["'Fay'"],
+        ],
     );
-    // Ben (62k) and Cy (75k); bounds are exclusive.
-    assert!(out.contains("2 row(s) returned"), "output:\n{}", out);
 }
 
 #[test]
-fn point_lookup_on_indexed_equality() {
-    let ws = setup("point");
-    let out = rook(&ws, &["USE pay;", "SELECT name FROM emp WHERE salary = 91000;"]);
-    assert!(out.contains("1 row(s) returned"), "output:\n{}", out);
-    assert!(out.contains("'Dee'"), "output:\n{}", out);
+fn between_is_inclusive_on_both_bounds() {
+    let ws = ws_with_index("between");
+    // Ascending key order is part of the B+Tree leaf contract.
+    expect_rows(
+        &ws,
+        &["USE pay;"],
+        "SELECT name FROM emp WHERE salary BETWEEN 48000 AND 80000;",
+        &[
+            &["'Eve'"],
+            &["'Ann'"],
+            &["'Ben'"],
+            &["'Fay'"],
+            &["'Cy'"],
+        ],
+    );
+}
+
+#[test]
+fn greater_than_excludes_bound() {
+    let ws = ws_with_index("gt");
+    expect_rows(
+        &ws,
+        &["USE pay;"],
+        "SELECT name FROM emp WHERE salary > 70000;",
+        &[
+            &["'Cy'"],
+            &["'Dee'"],
+        ],
+    );
+}
+
+#[test]
+fn less_equal_includes_bound() {
+    let ws = ws_with_index("le");
+    expect_rows(
+        &ws,
+        &["USE pay;"],
+        "SELECT name FROM emp WHERE salary <= 62000;",
+        &[
+            &["'Eve'"],
+            &["'Ann'"],
+            &["'Ben'"],
+            &["'Fay'"],
+        ],
+    );
+}
+
+#[test]
+fn single_element_in_uses_point_lookup() {
+    let ws = ws_with_index("in");
+    expect_rows(
+        &ws,
+        &["USE pay;"],
+        "SELECT name FROM emp WHERE salary IN (91000);",
+        &[
+            &["'Dee'"],
+        ],
+    );
+}
+
+#[test]
+fn and_range_intersects_into_one_interval() {
+    let ws = ws_with_index("andrange");
+    // Both bounds exclusive.
+    expect_rows(
+        &ws,
+        &["USE pay;"],
+        "SELECT name FROM emp WHERE salary > 48000 AND salary < 91000;",
+        &[
+            &["'Ann'"],
+            &["'Ben'"],
+            &["'Fay'"],
+            &["'Cy'"],
+        ],
+    );
+}
+
+// ── Path-equivalence oracle ──────────────────────────────────────────────────
+
+/// The SAME query must return the same rows whether the planner drives the
+/// table through its index or through a sequential scan. Any divergence
+/// between the two access paths is an engine bug this test will surface.
+#[test]
+fn indexed_and_sequential_paths_return_identical_results() {
+    let idx_ws = common::Workspace::new("equiv_idx");
+    let ni_ws = common::Workspace::new("equiv_seq");
+
+    let out = run(&idx_ws, &[SETUP, &["CREATE INDEX by_salary ON emp(salary);"]].concat());
+    assert!(out.contains("Created index"), "{}", out);
+    let out = run(&ni_ws, SETUP_NO_INDEX);
+    assert!(!out.to_lowercase().contains("error"), "{}", out);
+
+    const QUERIES: &[&str] = &[
+        "SELECT id, name FROM emp WHERE salary = 62000 ORDER BY name;",
+        "SELECT id, name FROM emp WHERE salary > 60000 ORDER BY name;",
+        "SELECT id FROM emp WHERE salary BETWEEN 48000 AND 76000;",
+        "SELECT name FROM emp WHERE salary >= 91000;",
+        "SELECT name FROM emp WHERE salary < 49000;",
+    ];
+
+    for q in QUERIES {
+        let via_index = common::parse_last_table(&run(&idx_ws, &["USE pay;", q]));
+        let via_scan = common::parse_last_table(&run(&ni_ws, &["USE pay2;", q]));
+        // These queries carry no ORDER BY, so row ORDER is unspecified —
+        // compare as multisets. (Ordered guarantees are pinned separately.)
+        let mut a = via_index.rows.clone();
+        let mut b = via_scan.rows.clone();
+        a.sort();
+        b.sort();
+        assert_eq!(
+            a, b,
+            "access paths disagree for `{}`\nvia index:\n{:#?}\nvia scan:\n{:#?}",
+            q,
+            via_index.rows,
+            via_scan.rows
+        );
+    }
 }
