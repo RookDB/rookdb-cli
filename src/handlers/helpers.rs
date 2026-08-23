@@ -134,6 +134,7 @@ pub fn find_matching_paren(s: &str) -> Option<usize> {
 }
 
 /// Convert an `ExprNode` to a value string for INSERT processing.
+#[allow(dead_code)] // retained for future INSERT rendering needs
 pub fn value_expr_to_string(expr: &ExprNode) -> String {
     match expr {
         ExprNode::Constant(cv) => convert::constant_to_raw_string(cv),

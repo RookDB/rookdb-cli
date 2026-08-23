@@ -2,19 +2,18 @@ use std::io;
 
 use rook_ast::*;
 use storage_manager::catalog::Catalog;
-use storage_manager::executor::physical::{execute_plan, execute_plan_collect};
-use storage_manager::insert_single_tuple;
+use storage_manager::executor::physical::execute_plan_collect;
 use storage_manager::executor::update_by_pointers;
 use storage_manager::executor::delete_by_pointers;
 
-use crate::handlers::helpers::{expr_to_debug_string, value_expr_to_string};
+use crate::handlers::helpers::expr_to_debug_string;
 
 /// Handle INSERT (both VALUES and INSERT INTO ... SELECT)
 pub fn handle_insert(
     catalog: &mut Catalog,
     current_db: &mut Option<String>,
     plan: &QueryPlan,
-    ins: &InsertPlan,
+    _ins: &InsertPlan,
 ) -> io::Result<()> {
     let db = match current_db {
         Some(db) => db.clone(),
@@ -24,73 +23,26 @@ pub fn handle_insert(
         }
     };
 
-    // Handle INSERT INTO ... SELECT via the planner pipeline
-    if ins.source_select.is_some() {
-        match storage_manager::planner::plan_query(plan, catalog, &db) {
-            Ok(logical_plan) => {
-                match execute_plan(&logical_plan, catalog, &db) {
-                    Ok(count) => {
-                        println!("{} row(s) inserted.\n", count);
-                    }
-                    Err(e) => println!("Insert execution error: {}", e),
-                }
-            }
-            Err(e) => println!("Insert planning error: {}", e),
-        }
-        return Ok(());
-    }
-
-    // Resolve column defaults from the table schema
-    let table_schema = catalog.databases.get(&db)
-        .and_then(|d| d.tables.get(&ins.table));
-    let _default_values: Vec<Option<String>> = match table_schema {
-        Some(schema) => schema.columns.iter().map(|c| {
-            c.constraints.default.as_ref().map(|dv| format!("{}", dv))
-        }).collect(),
-        None => Vec::new(),
-    };
-
-    for row in &ins.values {
-        // If explicit columns are specified, map them to schema positions
-        let values: Vec<String> = if !ins.columns.is_empty() {
-            if let Some(schema) = table_schema {
-                let mut full_row: Vec<String> = Vec::new();
-                for col in &schema.columns {
-                    if let Some(pos) = ins.columns.iter().position(|c| c.eq_ignore_ascii_case(&col.name)) {
-                        if let Some(expr) = row.get(pos) {
-                            full_row.push(value_expr_to_string(expr));
-                        } else {
-                            full_row.push("NULL".to_string());
-                        }
-                    } else if let Some(ref dv) = col.constraints.default {
-                        full_row.push(format!("{}", dv));
-                    } else if col.nullable {
-                        full_row.push("NULL".to_string());
+    // Both INSERT forms route through the standard planner pipeline:
+    //   INSERT ... SELECT  -> child plan produces rows
+    //   INSERT ... VALUES  -> constant rows expanded by the logical planner
+    match storage_manager::planner::plan_query(plan, catalog, &db) {
+        Ok(logical_plan) => {
+            // Collect silently — inserting rows should report a count, not
+            // render every written tuple as a result table.
+            match execute_plan_collect(&logical_plan, catalog, &db) {
+                Ok(tuples) => {
+                    let n = tuples.len();
+                    if n == 1 {
+                        println!("1 row inserted.\n");
                     } else {
-                        full_row.push("NULL".to_string());
+                        println!("{} rows inserted.\n", n);
                     }
                 }
-                full_row
-            } else {
-                row.iter().map(|expr| value_expr_to_string(expr)).collect()
-            }
-        } else {
-            row.iter().map(|expr| value_expr_to_string(expr)).collect()
-        };
-
-        let value_refs: Vec<&str> = values.iter().map(|v| v.as_str()).collect();
-
-        match insert_single_tuple(catalog, &db, &ins.table, &value_refs) {
-            Ok(true) => {
-                println!("1 row inserted.");
-            }
-            Ok(false) => {
-                println!("Insert failed.");
-            }
-            Err(e) => {
-                println!("Insert error: {}", e);
+                Err(e) => println!("Insert failed: {}", e),
             }
         }
+        Err(e) => println!("Insert planning error: {}", e),
     }
 
     Ok(())
