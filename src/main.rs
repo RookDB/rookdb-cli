@@ -116,6 +116,7 @@ fn execute(
             QueryPlan::DropIndex(ref p) => handlers::ddl::handle_drop_index(catalog, current_db, p),
             QueryPlan::CreateIndex(ref p) => handlers::ddl::handle_create_index(catalog, current_db, p),
             QueryPlan::Delete(ref p) => handlers::dml::handle_delete(catalog, current_db, p),
+            QueryPlan::Vacuum(ref p) => handlers::ddl::handle_vacuum(catalog, current_db, p),
             QueryPlan::Unknown(ref msg) => {
                 println!("Unsupported SQL statement: {}", msg);
                 Ok(())

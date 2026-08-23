@@ -2,8 +2,7 @@ use std::io;
 use std::str::FromStr;
 
 use rook_ast::*;
-use storage_manager::catalog::{create_database, create_table, Catalog};
-use storage_manager::catalog::Column;
+use storage_manager::catalog::{create_database, create_table, Catalog};use storage_manager::catalog::Column;
 use storage_manager::catalog::Constraints;
 use storage_manager::types::DataType;
 use storage_manager::executor::create_index;
@@ -29,6 +28,13 @@ pub fn handle_drop_database(
     params: &DropDatabasePlan,
 ) -> io::Result<()> {
     let db_name = &params.database;
+
+    // Defense-in-depth: the name is about to be used in `remove_dir_all`.
+    if let Err(e) = storage_manager::backend::name_validation::validate_database_name(db_name) {
+        eprintln!("{}", e);
+        return Ok(());
+    }
+
     if !catalog.databases.contains_key(db_name) {
         if params.if_exists {
             println!("Database '{}' does not exist (IF EXISTS specified, skipping).", db_name);
@@ -169,7 +175,7 @@ pub fn handle_create_table(
         let has_pk = col.constraints.iter().any(|c| c.eq_ignore_ascii_case("PRIMARY KEY"));
         if has_pk {
             let index_name = format!("pk_{}_{}", params.table, col.name);
-            if let Err(e) = create_index(catalog, &db, &params.table, &index_name, &col.name) {
+            if let Err(e) = create_index(catalog, &db, &params.table, &index_name, &[col.name.clone()]) {
                 eprintln!("Warning: failed to auto-create PRIMARY KEY index: {}", e);
             }
         }
@@ -243,6 +249,7 @@ pub fn handle_drop_view(
 }
 
 /// Handle TRUNCATE TABLE
+/// Handle TRUNCATE
 pub fn handle_truncate(
     catalog: &mut Catalog,
     current_db: &mut Option<String>,
@@ -256,6 +263,39 @@ pub fn handle_truncate(
         }
     };
     db::execute_truncate(catalog, &db, &params.table)
+}
+
+/// Handle VACUUM — reclaim space from soft-deleted rows and rebuild indexes.
+pub fn handle_vacuum(
+    catalog: &mut Catalog,
+    current_db: &mut Option<String>,
+    params: &VacuumPlan,
+) -> io::Result<()> {
+    let db = match current_db {
+        Some(db) => db.clone(),
+        None => {
+            println!("No database selected. Use 'USE <database>' first.");
+            return Ok(());
+        }
+    };
+
+    match storage_manager::backend::executor::vacuum::vacuum_table(catalog, &db, &params.table) {
+        Ok(stats) => {
+            println!(
+                "VACUUM '{}.{}' complete: {} page(s) compacted, {} dead tuple(s) reclaimed, {} index(es) rebuilt.",
+                db,
+                params.table,
+                stats.pages_compacted,
+                stats.dead_tuples_before,
+                stats.indexes_rebuilt
+            );
+            if stats.pages_compacted == 0 {
+                println!("Table is already clean — nothing to do.");
+            }
+        }
+        Err(e) => println!("VACUUM failed: {}", e),
+    }
+    Ok(())
 }
 
 /// Handle CREATE TABLE AS SELECT
@@ -304,11 +344,11 @@ pub fn handle_create_index(
         }
     };
 
-    match create_index(catalog, &db, &params.table_name, &params.index_name, &params.column_name) {
+    match create_index(catalog, &db, &params.table_name, &params.index_name, &params.columns) {
         Ok(count) => {
             println!(
                 "Created index '{}' on {}.{}({}) with {} entries.",
-                params.index_name, db, params.table_name, params.column_name, count
+                params.index_name, db, params.table_name, params.columns.join(","), count
             );
         }
         Err(e) => {
