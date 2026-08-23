@@ -1,11 +1,7 @@
-use std::fs::OpenOptions;
 use std::io;
 use std::path::Path;
 
-use storage_manager::catalog::{Catalog, Column, create_table, init_catalog, load_catalog};
-use storage_manager::executor::{
-    delete_tuples, parse_set_clause, parse_where_clause_with_schema, update_tuples,
-};
+use storage_manager::catalog::{Catalog, create_table, init_catalog, load_catalog};
 use storage_manager::heap::HeapManager;
 use storage_manager::types::{deserialize_nullable_row, serialize_nullable_typed_row, DataValue};
 use storage_manager::insert_single_tuple;
@@ -13,73 +9,6 @@ use storage_manager::insert_single_tuple;
 pub fn initialize_catalog() -> Catalog {
     init_catalog();
     load_catalog()
-}
-
-/// Execute an UPDATE query
-pub fn execute_update(
-    catalog: &Catalog,
-    db: &str,
-    table: &str,
-    set_clause: &str,
-    where_clause: Option<&str>,
-) -> io::Result<()> {
-    // Validate database and table exist
-    let db_obj = catalog
-        .databases
-        .get(db)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("Database '{}' not found", db)))?;
-
-    let table_schema = db_obj
-        .tables
-        .get(table)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("Table '{}' not found in database '{}'", table, db)))?;
-
-    // Parse SET clause
-    let assignments =
-        parse_set_clause(set_clause).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Could not parse SET clause"))?;
-
-    if assignments.is_empty() {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "No assignments in SET clause"));
-    }
-
-    // Parse WHERE clause if provided
-    let columns: Vec<Column> = table_schema.columns.clone();
-    let where_str = where_clause.unwrap_or("");
-    let condition_groups = if where_str.is_empty() {
-        vec![]
-    } else {
-        parse_where_clause_with_schema(where_str, &columns)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Could not parse WHERE clause"))?
-    };
-
-    // Check if table file exists
-    let path = format!("database/base/{}/{}.dat", db, table);
-    if !Path::new(&path).exists() {
-        return Err(io::Error::new(io::ErrorKind::NotFound, format!("Table file not found: '{}'", path)));
-    }
-
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&path)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to open table file: {}", e)))?;
-
-    // Execute UPDATE
-    match update_tuples(
-        catalog,
-        db,
-        table,
-        &mut file,
-        &assignments,
-        &condition_groups,
-        false,
-    ) {
-        Ok(result) => {
-            println!("\nUpdated {} row(s).", result.updated_count);
-            Ok(())
-        }
-        Err(e) => Err(io::Error::new(io::ErrorKind::Other, format!("Update failed: {}", e))),
-    }
 }
 
 fn select_plan_references_table(plan: &rook_ast::SelectPlan, table: &str) -> bool {
@@ -1264,53 +1193,3 @@ pub fn execute_drop_index(
     Ok(())
 }
 
-/// Execute a DELETE query
-pub fn execute_delete(
-    catalog: &Catalog,
-    db: &str,
-    table: &str,
-    where_clause: Option<&str>,
-) -> io::Result<()> {
-    // Validate database and table exist
-    let db_obj = catalog
-        .databases
-        .get(db)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("Database '{}' not found", db)))?;
-
-    let table_schema = db_obj
-        .tables
-        .get(table)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("Table '{}' not found in database '{}'", table, db)))?;
-
-    // Parse WHERE clause if provided
-    let columns: Vec<Column> = table_schema.columns.clone();
-    let where_str = where_clause.unwrap_or("");
-    let condition_groups = if where_str.is_empty() {
-        // No WHERE clause => delete all rows
-        vec![]
-    } else {
-        parse_where_clause_with_schema(where_str, &columns)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Could not parse WHERE clause"))?
-    };
-
-    // Check if table file exists
-    let path = format!("database/base/{}/{}.dat", db, table);
-    if !Path::new(&path).exists() {
-        return Err(io::Error::new(io::ErrorKind::NotFound, format!("Table file not found: '{}'", path)));
-    }
-
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&path)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to open table file: {}", e)))?;
-
-    // Execute DELETE
-    match delete_tuples(catalog, db, table, &mut file, &condition_groups, false) {
-        Ok(result) => {
-            println!("\nDeleted {} row(s).", result.deleted_count);
-            Ok(())
-        }
-        Err(e) => Err(io::Error::new(io::ErrorKind::Other, format!("Delete failed: {}", e))),
-    }
-}

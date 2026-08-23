@@ -7,7 +7,6 @@ use storage_manager::insert_single_tuple;
 use storage_manager::executor::update_by_pointers;
 use storage_manager::executor::delete_by_pointers;
 
-use crate::convert;
 use crate::handlers::helpers::{expr_to_debug_string, value_expr_to_string};
 
 /// Handle INSERT (both VALUES and INSERT INTO ... SELECT)
@@ -132,40 +131,28 @@ pub fn handle_update(
     };
     let query_plan = QueryPlan::Select(select_plan);
 
-    // Try Volcano-based row selection first
-    // If Volcano returns tuples but ALL lack location metadata (page_id/slot_id),
-    // fall back to the string-based approach to ensure reliability.
-    let (pointers, need_fallback) = match storage_manager::planner::plan_query(&query_plan, catalog, &db)
+    // Volcano is the single row-selection path: execute the SELECT plan and
+    // rewrite the matching tuples in place via their heap locations. An
+    // empty result simply means zero affected rows — no legacy fallback.
+    let tuples = match storage_manager::planner::plan_query(&query_plan, catalog, &db)
         .map_err(|e| format!("Plan error: {}", e))
         .and_then(|logical_plan| execute_plan_collect(&logical_plan, catalog, &db))
     {
-        Ok(tuples) if !tuples.is_empty() => {
-            let pts: Vec<(u32, u32)> = tuples.iter().filter_map(|t| {
-                match (t.page_id, t.slot_id) {
-                    (Some(page), Some(slot)) => Some((page, slot)),
-                    _ => None,
-                }
-            }).collect();
-            if pts.is_empty() {
-                // Tuples returned but no location metadata — fall back
-                (vec![], true)
-            } else {
-                (pts, false)
-            }
-        }
-        _ => {
-            // Volcano returned 0 tuples or error — fall back to string-based approach
-            (vec![], true)
+        Ok(tuples) => tuples,
+        Err(e) => {
+            println!("Update failed: {}", e);
+            return Ok(());
         }
     };
-
-    if need_fallback {
-        let where_clause = upd.selection.as_ref()
-            .map(|pred| convert::predicate_to_debug_string(pred));
-        let set_str = upd.assignments.iter()
-            .map(|a| format!("{} = {}", a.column, expr_to_debug_string(&a.value)))
-            .collect::<Vec<_>>().join(", ");
-        return crate::db::execute_update(catalog, &db, &upd.table, &set_str, where_clause.as_deref());
+    let pointers: Vec<(u32, u32)> = tuples.iter().filter_map(|t| {
+        match (t.page_id, t.slot_id) {
+            (Some(page), Some(slot)) => Some((page, slot)),
+            _ => None,
+        }
+    }).collect();
+    if pointers.len() != tuples.len() {
+        println!("Update failed: engine returned rows without heap locations");
+        return Ok(());
     }
 
     // Build parsed SET assignments from the AST
@@ -225,37 +212,26 @@ pub fn handle_delete(
     };
     let query_plan = QueryPlan::Select(select_plan);
 
-    // Try Volcano-based row selection first
-    // If Volcano returns tuples but ALL lack location metadata (page_id/slot_id),
-    // fall back to the string-based approach to ensure reliability.
-    let (pointers, need_fallback) = match storage_manager::planner::plan_query(&query_plan, catalog, &db)
+    // Volcano is the single row-selection path (see handle_update).
+    let tuples = match storage_manager::planner::plan_query(&query_plan, catalog, &db)
         .map_err(|e| format!("Plan error: {}", e))
         .and_then(|logical_plan| execute_plan_collect(&logical_plan, catalog, &db))
     {
-        Ok(tuples) if !tuples.is_empty() => {
-            let pts: Vec<(u32, u32)> = tuples.iter().filter_map(|t| {
-                match (t.page_id, t.slot_id) {
-                    (Some(page), Some(slot)) => Some((page, slot)),
-                    _ => None,
-                }
-            }).collect();
-            if pts.is_empty() {
-                // Tuples returned but no location metadata — fall back
-                (vec![], true)
-            } else {
-                (pts, false)
-            }
-        }
-        _ => {
-            // Volcano returned 0 tuples or error — fall back to string-based approach
-            (vec![], true)
+        Ok(tuples) => tuples,
+        Err(e) => {
+            println!("Delete failed: {}", e);
+            return Ok(());
         }
     };
-
-    if need_fallback {
-        let where_clause = del.selection.as_ref()
-            .map(|pred| convert::predicate_to_debug_string(pred));
-        return crate::db::execute_delete(catalog, &db, &del.table, where_clause.as_deref());
+    let pointers: Vec<(u32, u32)> = tuples.iter().filter_map(|t| {
+        match (t.page_id, t.slot_id) {
+            (Some(page), Some(slot)) => Some((page, slot)),
+            _ => None,
+        }
+    }).collect();
+    if pointers.len() != tuples.len() {
+        println!("Delete failed: engine returned rows without heap locations");
+        return Ok(());
     }
 
     match delete_by_pointers(catalog, &db, &del.table, &pointers) {
