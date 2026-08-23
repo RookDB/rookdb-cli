@@ -947,6 +947,34 @@ pub fn remove_index_files_for_table(db: &str, table: &str, index_name: Option<&s
         return;
     }
 
+    // Drop any cached B+ Tree handle(s) for the files being removed so a
+    // later CREATE INDEX on the same name cannot reuse the stale tree.
+    if let Some(name) = index_name {
+        storage_manager::backend::cache::evict_btree(std::path::Path::new(&format!(
+            "database/base/{}/{}.{}.idx", db, table, name
+        )));
+        storage_manager::backend::cache::evict_btree(std::path::Path::new(&format!(
+            "database/base/{}/{}.idx", db, table
+        )));
+    } else {
+        storage_manager::backend::cache::evict_btree(std::path::Path::new(&format!(
+            "database/base/{}/{}.idx", db, table
+        )));
+        if let Ok(entries) = std::fs::read_dir(base_path) {
+            let prefix = format!("{}.", table);
+            for entry in entries.flatten() {
+                let fname = entry.file_name().to_string_lossy().to_string();
+                if fname.starts_with(&prefix) && fname.ends_with(".idx") {
+                    storage_manager::backend::cache::evict_btree(&entry.path());
+                }
+            }
+        }
+    }
+
+    // Index set changed — forget memoised discovery/metadata.
+    storage_manager::backend::cache::invalidate_metadata();
+    storage_manager::backend::executor::create_index::invalidate_discovery(db, Some(table));
+
     if let Some(name) = index_name {
         // Remove just this specific named index
         let idx_path = format!("database/base/{}/{}.{}.idx", db, table, name);

@@ -75,9 +75,14 @@ fn main() -> io::Result<()> {
 
         for stmt in complete {
             execute(&stmt, &mut catalog, &mut current_db);
+            // Statement boundary: make the statement's writes durable before
+            // prompting again (matches the pre-cache flush-on-drop contract).
+            storage_manager::backend::cache::checkpoint();
         }
     }
 
+    // EOF path may have executed a trailing statement.
+    storage_manager::backend::cache::checkpoint();
     Ok(())
 }
 
