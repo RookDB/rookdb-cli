@@ -9,7 +9,10 @@ use crate::convert;
 ///   "FOREIGN KEY (user_id) REFERENCES users(id)",
 ///   "CHECK (age > 0)"
 pub fn save_table_constraint(db: &str, table: &str, definition: &str) {
-    let upper = definition.to_uppercase();
+    // ASCII-only folding: keyword matching needs nothing beyond A-Z, and it
+    // guarantees `upper.len() == definition.len()` so offsets into the
+    // original string stay valid (see the FOREIGN KEY arm below).
+    let upper = definition.to_ascii_uppercase();
 
     // PRIMARY KEY (cols...)
     if let Some(rest) = upper.strip_prefix("PRIMARY KEY (") {
@@ -36,10 +39,21 @@ pub fn save_table_constraint(db: &str, table: &str, definition: &str) {
         );
     }
     // FOREIGN KEY (cols) REFERENCES ref_table(ref_cols) [ON DELETE CASCADE|RESTRICT]
-    else if let Some(rest) = upper.strip_prefix("FOREIGN KEY (") {
-        if let Some(end_paren) = rest.find(')') {
-            let cols = rest[..end_paren].to_string();
-            let after_paren = rest[end_paren + 1..].trim();
+    //
+    // Keywords are matched on an ASCII-uppercased copy, but identifiers are
+    // sliced from the ORIGINAL definition: ref_table/ref_cols feed
+    // case-sensitive file and catalog lookups during enforcement, so their
+    // letter-case must survive verbatim.
+    else if upper.starts_with("FOREIGN KEY (") {
+        // to_ascii_uppercase is length-preserving by construction, so
+        // offsets from `upper` always address the same characters in
+        // `definition` (plain to_uppercase is NOT: 'ß' → "SS" would shift
+        // every later offset).
+        let off = "FOREIGN KEY (".len();
+        let rest_u = &upper[off..];
+        if let Some(end_paren) = rest_u.find(')') {
+            let cols = definition[off..off + end_paren].to_string();
+            let after_paren = definition[off + end_paren + 1..].trim_start();
             if let Some(ref_rest) = after_paren.strip_prefix("REFERENCES ") {
                 if let Some(ref_start) = ref_rest.find('(') {
                     let ref_table_name = ref_rest[..ref_start].trim().to_string();
@@ -49,22 +63,20 @@ pub fn save_table_constraint(db: &str, table: &str, definition: &str) {
                         let remaining_after_ref = ref_cols_rest[ref_end + 1..].trim();
                         let mut delete_action = "";
                         let mut update_action = "";
-                        let mut rem = remaining_after_ref;
+                        let mut rem = remaining_after_ref.to_uppercase();
                         if let Some(after) = rem.strip_prefix("ON DELETE ") {
-                            let action_rest = after.trim();
-                            if action_rest.to_uppercase().starts_with("CASCADE") {
+                            if after.starts_with("CASCADE") {
                                 delete_action = " ON DELETE CASCADE";
-                            } else if action_rest.to_uppercase().starts_with("SET NULL") {
+                            } else if after.starts_with("SET NULL") {
                                 delete_action = " ON DELETE SET NULL";
                             }
-                            let skip_to = action_rest.find(|c: char| c.is_whitespace()).unwrap_or(action_rest.len());
-                            rem = action_rest[skip_to..].trim();
+                            let skip_to = after.find(|c: char| c.is_whitespace()).unwrap_or(after.len());
+                            rem = after[skip_to..].trim().to_string();
                         }
                         if let Some(after) = rem.strip_prefix("ON UPDATE ") {
-                            let action_rest = after.trim();
-                            if action_rest.to_uppercase().starts_with("CASCADE") {
+                            if after.starts_with("CASCADE") {
                                 update_action = " ON UPDATE CASCADE";
-                            } else if action_rest.to_uppercase().starts_with("SET NULL") {
+                            } else if after.starts_with("SET NULL") {
                                 update_action = " ON UPDATE SET NULL";
                             }
                         }
