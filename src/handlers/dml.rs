@@ -88,7 +88,7 @@ pub fn handle_update(
     // empty result simply means zero affected rows — no legacy fallback.
     let tuples = match storage_manager::planner::plan_query(&query_plan, catalog, &db)
         .map_err(|e| format!("Plan error: {}", e))
-        .and_then(|logical_plan| execute_plan_collect(&logical_plan, catalog, &db))
+        .and_then(|logical_plan| execute_plan_collect(&logical_plan, catalog, &db).map_err(|e| e.to_string()))
     {
         Ok(tuples) => tuples,
         Err(e) => {
@@ -167,7 +167,7 @@ pub fn handle_delete(
     // Volcano is the single row-selection path (see handle_update).
     let tuples = match storage_manager::planner::plan_query(&query_plan, catalog, &db)
         .map_err(|e| format!("Plan error: {}", e))
-        .and_then(|logical_plan| execute_plan_collect(&logical_plan, catalog, &db))
+        .and_then(|logical_plan| execute_plan_collect(&logical_plan, catalog, &db).map_err(|e| e.to_string()))
     {
         Ok(tuples) => tuples,
         Err(e) => {

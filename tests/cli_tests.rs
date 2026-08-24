@@ -1878,3 +1878,80 @@ fn index_accelerated_and_range() {
     assert_contains(&out, "4");
     assert_rows(&out, 3);
 }
+
+// ── Inline column-level REFERENCES ───────────────────────────────────────────
+
+/// `pid INT REFERENCES p(id)` must enforce exactly like the table-level
+/// `FOREIGN KEY (pid) REFERENCES p(id)` form. Historically the inline
+/// definition was silently dropped (orphans inserted freely).
+#[test]
+fn inline_references_enforce_fk() {
+    clean_db();
+    let out = rook(
+        "CREATE DATABASE inl_fk;\n\
+         USE inl_fk;\n\
+         CREATE TABLE p (id INT PRIMARY KEY);\n\
+         CREATE TABLE c (id INT, pid INT REFERENCES p(id));\n\
+         INSERT INTO p VALUES (1);\n\
+         INSERT INTO c VALUES (1, 1);\n\
+         INSERT INTO c VALUES (2, 99);\n\
+         SELECT COUNT(*) FROM c;\n",
+    );
+    // Valid child row accepted…
+    assert_contains(&out, "1 row inserted");
+    // …orphan rejected by the FK check.
+    assert_contains(&out, "Insert failed");
+    assert_rows(&out, 1);
+}
+
+/// Inline `REFERENCES … ON DELETE CASCADE` propagates parent deletes.
+#[test]
+fn inline_references_on_delete_cascade() {
+    clean_db();
+    let out = rook(
+        "CREATE DATABASE inl_cas;\n\
+         USE inl_cas;\n\
+         CREATE TABLE p (id INT PRIMARY KEY);\n\
+         CREATE TABLE c (id INT, pid INT REFERENCES p(id) ON DELETE CASCADE);\n\
+         INSERT INTO p VALUES (1);\n\
+         INSERT INTO c VALUES (1, 1);\n\
+         DELETE FROM p WHERE id = 1;\n\
+         SELECT COUNT(*) FROM c;\n",
+    );
+    assert_contains(&out, "Deleted");
+    // The cascade removed the only child row.
+    assert_rows(&out, 0);
+}
+
+// ── Multi-line DDL regression ────────────────────────────────────────────────
+
+/// Multi-line CREATE TABLE (with a table-level FK) must execute as one
+/// statement. Historically suspected of a stdin buffering race; the current
+/// line-accumulator REPL handles it — this test pins that so it cannot
+/// regress silently.
+#[test]
+fn multiline_create_table_with_fk_executes_atomically() {
+    clean_db();
+    let out = rook(
+        "CREATE DATABASE ml_ddl;\n\
+         USE ml_ddl;\n\
+         CREATE TABLE p (\n\
+           id INT PRIMARY KEY\n\
+         );\n\
+         CREATE TABLE c (\n\
+           id INT,\n\
+           pid INT,\n\
+           FOREIGN KEY (pid) REFERENCES p(id)\n\
+         );\n\
+         INSERT INTO p VALUES (1);\n\
+         INSERT INTO c VALUES (1, 1);\n\
+         INSERT INTO c VALUES (2, 99);\n\
+         SELECT COUNT(*) FROM c;\n",
+    );
+    assert_not_contains(&out, "Parse error");
+    assert_not_contains(&out, "error");
+    // The multi-line FK table was created AND enforces: valid row in,
+    // orphan rejected.
+    assert_contains(&out, "Insert failed");
+    assert_rows(&out, 1);
+}
