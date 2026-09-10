@@ -7,6 +7,8 @@ use storage_manager::types::{deserialize_nullable_row, serialize_nullable_typed_
 use storage_manager::insert_single_tuple;
 
 pub fn initialize_catalog() -> Catalog {
+    storage_manager::backend::executor::row_select::register_where_parser(rook_parser::parse_where_text);
+    storage_manager::backend::cache::register_check_parser(rook_parser::parse_check_expr);
     init_catalog();
     load_catalog()
 }
@@ -787,10 +789,10 @@ pub fn execute_create_table_as_select(
             format!("Failed to plan SELECT query: {}", e))),
     };
 
-    let tuples = match storage_manager::executor::physical::engine::execute_plan_collect(
+    let (tuples, output_schema) = match storage_manager::executor::physical::engine::execute_plan_collect_with_schema(
         &logical_plan, catalog, db,
     ) {
-        Ok(rows) => rows,
+        Ok(res) => res,
         Err(e) => return Err(io::Error::new(io::ErrorKind::Other,
             format!("Failed to execute SELECT query: {}", e))),
     };
@@ -820,9 +822,8 @@ pub fn execute_create_table_as_select(
         return Ok(());
     }
 
-    // Infer column types from the first tuple's schema
-    let first_tuple = &tuples[0];
-    let columns: Vec<storage_manager::catalog::Column> = first_tuple.column_info.iter().map(|ci| {
+    // Infer column types from the query output schema
+    let columns: Vec<storage_manager::catalog::Column> = output_schema.iter().map(|ci| {
         storage_manager::catalog::Column {
             name: ci.name.clone(),
             data_type: ci.data_type.clone(),

@@ -15,9 +15,14 @@ categories = ["command-line-utilities", "database"]
 name = "rookdb"
 path = "src/main.rs"
 
+[[bin]]
+name = "stress_bench"
+path = "src/bin/stress_bench.rs"
+
 [dependencies]
 rook-ast = { path = "../rook-ast" }
 rook-parser = { path = "../rook-parser" }
 storage_manager = { path = "../RookDB" }
 serde_json = "1.0.150"
 serde = "1.0.228"
+env_logger = "0.11"
