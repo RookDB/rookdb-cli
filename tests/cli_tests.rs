@@ -105,8 +105,8 @@ fn ensure_suite_init() {
         if let Ok(entries) = std::fs::read_dir(project_root()) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if name.starts_with("database_test_") {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                    && name.starts_with("database_test_") {
                         let should_clean = if let Some(pid_str) = name.strip_prefix("database_test_p") {
                             // PID-prefixed: extract the PID (everything before the second '_')
                             let pid = pid_str.split('_').next()
@@ -121,7 +121,6 @@ fn ensure_suite_init() {
                             let _ = std::fs::remove_dir_all(&path);
                         }
                     }
-                }
             }
         }
     });

@@ -164,10 +164,8 @@ fn bench_raw(n: u64, tag: &str) {
     let samples = 10_000u64.min(n);
     // rebuild a location index by scanning once (id order == slot order here)
     let mut locs: Vec<(u32, u32)> = Vec::with_capacity(n as usize);
-    for r in hm.scan() {
-        if let Ok((p, s, _)) = r {
-            locs.push((p, s));
-        }
+    for (p, s, _) in hm.scan().flatten() {
+        locs.push((p, s));
     }
     let t = Instant::now();
     for _ in 0..samples {
@@ -323,7 +321,7 @@ fn bench_join(m: u64, tag: &str) {
     // populate staff (m rows) and orders (2 rows per staff member)
     let t = Instant::now();
     for i in 0..m {
-        let vals = vec![i.to_string(), format!("user_{:06}", (i % 1_000_000) as usize), (i % 100_000).to_string()];
+        let vals = [i.to_string(), format!("user_{:06}", (i % 1_000_000) as usize), (i % 100_000).to_string()];
         let refs: Vec<&str> = vals.iter().map(|s| s.as_str()).collect();
         if !storage_manager::insert_single_tuple(&catalog, db, "staff", &refs).unwrap_or(false) {
             eprintln!("[ERROR] staff insert {} rejected", i);
@@ -331,7 +329,7 @@ fn bench_join(m: u64, tag: &str) {
         }
     }
     for i in 0..(m * 2) {
-        let vals = vec![i.to_string(), (i % m).to_string(), (i % 500).to_string()];
+        let vals = [i.to_string(), (i % m).to_string(), (i % 500).to_string()];
         let refs: Vec<&str> = vals.iter().map(|s| s.as_str()).collect();
         if !storage_manager::insert_single_tuple(&catalog, db, "orders", &refs)
             .unwrap_or(false)

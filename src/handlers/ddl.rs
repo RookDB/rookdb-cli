@@ -57,11 +57,10 @@ pub fn handle_drop_database(
         eprintln!("[DropDatabase] Warning: failed to save catalog: {}", e);
     }
 
-    if let Some(ref cur) = *current_db {
-        if cur == db_name {
+    if let Some(ref cur) = *current_db
+        && cur == db_name {
             *current_db = None;
         }
-    }
 
     println!("Database '{}' dropped successfully.", db_name);
     Ok(())
@@ -123,11 +122,7 @@ pub fn handle_create_table(
                 let raw_val = &c["DEFAULT ".len()..];
                 Some(raw_val.to_string())
             } else if let Some(val) = upper.strip_prefix("DEFAULT(") {
-                if let Some(end) = val.rfind(')') {
-                    Some(val[..end].to_string())
-                } else {
-                    None
-                }
+                val.rfind(')').map(|end| val[..end].to_string())
             } else {
                 None
             }
@@ -175,7 +170,7 @@ pub fn handle_create_table(
         let has_pk = col.constraints.iter().any(|c| c.eq_ignore_ascii_case("PRIMARY KEY"));
         if has_pk {
             let index_name = format!("pk_{}_{}", params.table, col.name);
-            if let Err(e) = create_index(catalog, &db, &params.table, &index_name, &[col.name.clone()]) {
+            if let Err(e) = create_index(catalog, &db, &params.table, &index_name, std::slice::from_ref(&col.name)) {
                 eprintln!("Warning: failed to auto-create PRIMARY KEY index: {}", e);
             }
         }

@@ -31,11 +31,10 @@ fn select_plan_references_table(plan: &rook_ast::SelectPlan, table: &str) -> boo
         if select_plan_references_table(&cte.query, table) {
             return true;
         }
-        if let Some(rt) = &cte.recursive_term {
-            if select_plan_references_table(rt, table) {
+        if let Some(rt) = &cte.recursive_term
+            && select_plan_references_table(rt, table) {
                 return true;
             }
-        }
     }
     // Check projections (ScalarSubquery)
     for proj in &plan.projections {
@@ -49,17 +48,15 @@ fn select_plan_references_table(plan: &rook_ast::SelectPlan, table: &str) -> boo
         }
     }
     // Check selection (WHERE)
-    if let Some(sel) = &plan.selection {
-        if predicate_node_references_table(sel, table) {
+    if let Some(sel) = &plan.selection
+        && predicate_node_references_table(sel, table) {
             return true;
         }
-    }
     // Check HAVING
-    if let Some(hav) = &plan.having {
-        if predicate_node_references_table(hav, table) {
+    if let Some(hav) = &plan.having
+        && predicate_node_references_table(hav, table) {
             return true;
         }
-    }
     false
 }
 
@@ -86,23 +83,18 @@ fn expr_references_table(expr: &rook_ast::ExprNode, table: &str) -> bool {
                     return true;
                 }
             }
-            if let Some(el) = else_result {
-                if expr_references_table(el, table) {
+            if let Some(el) = else_result
+                && expr_references_table(el, table) {
                     return true;
                 }
-            }
             false
         }
         rook_ast::ExprNode::Function { args, .. } => {
             for arg in args {
-                match arg {
-                    rook_ast::FunctionArg::Expr(inner) => {
-                        if expr_references_table(inner, table) {
-                            return true;
-                        }
+                if let rook_ast::FunctionArg::Expr(inner) = arg
+                    && expr_references_table(inner, table) {
+                        return true;
                     }
-                    _ => {}
-                }
             }
             false
         }
@@ -188,11 +180,10 @@ pub fn execute_drop_table(
     let mut ref_views = Vec::new();
     if let Some(db_obj) = catalog.databases.get(db) {
         for (view_name, view_def) in &db_obj.views {
-            if let Ok(select_plan) = serde_json::from_str::<rook_ast::SelectPlan>(&view_def.query_json) {
-                if select_plan_references_table(&select_plan, table) {
+            if let Ok(select_plan) = serde_json::from_str::<rook_ast::SelectPlan>(&view_def.query_json)
+                && select_plan_references_table(&select_plan, table) {
                     ref_views.push(view_name.clone());
                 }
-            }
         }
     }
 
@@ -207,8 +198,7 @@ pub fn execute_drop_table(
     let ref_fks = match storage_manager::backend::constraint::loaders::load_referencing_foreign_keys(db, table) {
         Ok(fks) => fks,
         Err(e) => {
-            return Err(io::Error::new(io::ErrorKind::Other,
-                format!("Failed to check referencing foreign keys: {}", e)));
+            return Err(io::Error::other(format!("Failed to check referencing foreign keys: {}", e)));
         }
     };
 
@@ -221,14 +211,13 @@ pub fn execute_drop_table(
     }
 
     // If cascade is true, automatically drop referencing views
-    if cascade && !ref_views.is_empty() {
-        if let Some(db_obj) = catalog.databases.get_mut(db) {
+    if cascade && !ref_views.is_empty()
+        && let Some(db_obj) = catalog.databases.get_mut(db) {
             for view_name in &ref_views {
                 db_obj.views.remove(view_name);
                 println!("Cascaded drop of view '{}'.", view_name);
             }
         }
-    }
 
     // If cascade is true, automatically delete referencing foreign key constraints
     if cascade && !ref_fks.is_empty() {
@@ -372,8 +361,7 @@ pub fn execute_alter_table(
 
                 // Open the old heap and scan all rows
                 let old_heap = HeapManager::open(std::path::PathBuf::from(&dat_path))
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other,
-                        format!("Failed to open heap for backfill: {}", e)))?;
+                    .map_err(|e| io::Error::other(format!("Failed to open heap for backfill: {}", e)))?;
 
                 let mut migrated_rows: Vec<Vec<u8>> = Vec::new();
                 for result in old_heap.scan() {
@@ -402,8 +390,7 @@ pub fn execute_alter_table(
                 // Create a fresh heap at the temp path
                 {
                     let mut tmp_heap = HeapManager::create(std::path::PathBuf::from(&tmp_path))
-                        .map_err(|e| io::Error::new(io::ErrorKind::Other,
-                            format!("Failed to create temp heap for backfill: {}", e)))?;
+                        .map_err(|e| io::Error::other(format!("Failed to create temp heap for backfill: {}", e)))?;
                     for row in &migrated_rows {
                         tmp_heap.insert_tuple(row)?;
                     }
@@ -413,13 +400,11 @@ pub fn execute_alter_table(
                 // Atomic swap: remove old files, rename temp files into place
                 let fsm_path = format!("{}.fsm", dat_path);
                 std::fs::remove_file(&dat_path)
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other,
-                        format!("Failed to remove old heap during backfill: {}", e)))?;
+                    .map_err(|e| io::Error::other(format!("Failed to remove old heap during backfill: {}", e)))?;
                 let _ = std::fs::remove_file(&fsm_path);
 
                 std::fs::rename(&tmp_path, &dat_path)
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other,
-                        format!("Failed to rename backfill heap: {}", e)))?;
+                    .map_err(|e| io::Error::other(format!("Failed to rename backfill heap: {}", e)))?;
                 let _ = std::fs::rename(&tmp_fsm_path, &fsm_path);
 
                 // Remove stale index files — they reference old heap page/slot locations
@@ -458,8 +443,7 @@ pub fn execute_alter_table(
                     .collect();
 
                 let old_heap = HeapManager::open(std::path::PathBuf::from(&dat_path))
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other,
-                        format!("Failed to open heap for drop-column backfill: {}", e)))?;
+                    .map_err(|e| io::Error::other(format!("Failed to open heap for drop-column backfill: {}", e)))?;
 
                 let mut migrated_rows: Vec<Vec<u8>> = Vec::new();
                 for result in old_heap.scan() {
@@ -485,8 +469,7 @@ pub fn execute_alter_table(
 
                 {
                     let mut tmp_heap = HeapManager::create(std::path::PathBuf::from(&tmp_path))
-                        .map_err(|e| io::Error::new(io::ErrorKind::Other,
-                            format!("Failed to create temp heap for drop-column backfill: {}", e)))?;
+                        .map_err(|e| io::Error::other(format!("Failed to create temp heap for drop-column backfill: {}", e)))?;
                     for row in &migrated_rows {
                         tmp_heap.insert_tuple(row)?;
                     }
@@ -496,13 +479,11 @@ pub fn execute_alter_table(
                 // Atomic swap
                 let fsm_path = format!("{}.fsm", dat_path);
                 std::fs::remove_file(&dat_path)
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other,
-                        format!("Failed to remove old heap during drop-column backfill: {}", e)))?;
+                    .map_err(|e| io::Error::other(format!("Failed to remove old heap during drop-column backfill: {}", e)))?;
                 let _ = std::fs::remove_file(&fsm_path);
 
                 std::fs::rename(&tmp_path, &dat_path)
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other,
-                        format!("Failed to rename backfill heap: {}", e)))?;
+                    .map_err(|e| io::Error::other(format!("Failed to rename backfill heap: {}", e)))?;
                 let _ = std::fs::rename(&tmp_fsm_path, &fsm_path);
 
                 // Remove stale index files
@@ -570,8 +551,7 @@ pub fn execute_alter_table(
             let dat_path = format!("database/base/{}/{}.dat", db, alter.table);
             if Path::new(&dat_path).exists() {
                 let heap = HeapManager::open(std::path::PathBuf::from(&dat_path))
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other,
-                        format!("Failed to open heap for SET NOT NULL validation: {}", e)))?;
+                    .map_err(|e| io::Error::other(format!("Failed to open heap for SET NOT NULL validation: {}", e)))?;
 
                 // Fast-path: if the file size is only the header page (8 KB),
                 // there are no data pages and thus no rows to validate.
@@ -683,7 +663,7 @@ pub fn execute_truncate(
     let path = std::path::Path::new(&dat_path);
     if path.exists() {
         std::fs::remove_file(path).map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("Failed to remove table file: {}", e))
+            io::Error::other(format!("Failed to remove table file: {}", e))
         })?;
     }
     // Remove FSM fork
@@ -692,8 +672,8 @@ pub fn execute_truncate(
 
     // Create fresh heap file
     let mut hm = storage_manager::heap::HeapManager::create(std::path::PathBuf::from(&dat_path))
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to create table file: {}", e)))?;
-    hm.flush().map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to flush table file: {}", e)))?;
+        .map_err(|e| io::Error::other(format!("Failed to create table file: {}", e)))?;
+    hm.flush().map_err(|e| io::Error::other(format!("Failed to flush table file: {}", e)))?;
 
     // Remove index files (they're stale after truncation)
     remove_index_files_for_table(db, table, None);
@@ -793,8 +773,7 @@ pub fn execute_create_table_as_select(
         &logical_plan, catalog, db,
     ) {
         Ok(res) => res,
-        Err(e) => return Err(io::Error::new(io::ErrorKind::Other,
-            format!("Failed to execute SELECT query: {}", e))),
+        Err(e) => return Err(io::Error::other(format!("Failed to execute SELECT query: {}", e))),
     };
 
     if tuples.is_empty() {
@@ -865,7 +844,7 @@ fn logical_plan_schema(plan: &rook_ast::logical::LogicalPlan) -> Vec<(String, St
         }
         LogicalPlan::TableScan(t) => {
             t.schema.columns.iter().map(|c| {
-                (c.name.clone(), format!("{}", c.data_type))
+                (c.name.clone(), c.data_type.to_string())
             }).collect()
         }
         LogicalPlan::Filter(f) => logical_plan_schema(&f.child),
@@ -885,7 +864,7 @@ fn logical_plan_schema(plan: &rook_ast::logical::LogicalPlan) -> Vec<(String, St
         LogicalPlan::RecursiveCte(rc) => logical_plan_schema(&rc.outer),
         LogicalPlan::CteScan(cs) => {
             cs.schema.columns.iter().map(|c| {
-                (c.name.clone(), format!("{}", c.data_type))
+                (c.name.clone(), c.data_type.to_string())
             }).collect()
         }
         LogicalPlan::Insert(inp) => logical_plan_schema(&inp.child),

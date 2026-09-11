@@ -79,6 +79,7 @@ pub fn run(ws: &Workspace, sql_lines: &[&str]) -> String {
 }
 
 /// Run a single statement in its own session.
+#[allow(dead_code)]
 pub fn run_one(ws: &Workspace, sql: &str) -> String {
     run(ws, &[sql])
 }
@@ -105,6 +106,7 @@ pub struct QueryTable {
 
 impl QueryTable {
     /// The values of one column (in row order).
+    #[allow(dead_code)]
     pub fn column(&self, name: &str) -> Vec<String> {
         let idx = self
             .columns
