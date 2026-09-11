@@ -221,6 +221,13 @@ fn bench_engine(n: u64, tag: &str, with_index: bool) {
         Err(e) => eprintln!("[ERROR] count: {}", e),
     }
 
+    // DISTINCT count through planner + Volcano aggregate (exercises typed HashSet<DataValue>)
+    let t = Instant::now();
+    match count_via_sql(&catalog, db, "SELECT COUNT(DISTINCT salary) FROM staff") {
+        Ok(c) => result("volcano_count_distinct", n, t.elapsed().as_millis(), &format!("distinct={}", c)),
+        Err(e) => eprintln!("[ERROR] count distinct: {}", e),
+    }
+
     // indexed point SELECTs through full SQL text (parse+plan+IndexScan)
     if with_index {
         let mut rng = Lcg(0xDEAD_BEEF);
@@ -344,10 +351,11 @@ fn bench_join(m: u64, tag: &str) {
     storage_manager::backend::cache::checkpoint();
 
     let sql = "SELECT COUNT(*) FROM staff JOIN orders ON staff.id = orders.staff_id";
+    let tj = Instant::now();
     match count_via_sql(&catalog, db, sql) {
         Ok(c) => println!(
-            "[RESULT] phase=hash_join_count matched={} side_a={} side_b={}",
-            c, m, m * 2
+            "[RESULT] phase=hash_join_count matched={} elapsed_ms={} side_a={} side_b={}",
+            c, tj.elapsed().as_millis(), m, m * 2
         ),
         Err(e) => eprintln!("[ERROR] hash join: {}", e),
     }
