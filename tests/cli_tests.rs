@@ -1915,7 +1915,7 @@ fn inline_references_on_delete_cascade() {
          INSERT INTO p VALUES (1);\n\
          INSERT INTO c VALUES (1, 1);\n\
          DELETE FROM p WHERE id = 1;\n\
-         SELECT COUNT(*) FROM c;\n",
+         SELECT * FROM c;\n",
     );
     assert_contains(&out, "Deleted");
     // The cascade removed the only child row.

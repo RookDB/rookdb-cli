@@ -5,7 +5,7 @@ use rook_ast::*;
 use storage_manager::catalog::{create_database, create_table, Catalog};use storage_manager::catalog::Column;
 use storage_manager::catalog::Constraints;
 use storage_manager::types::DataType;
-use storage_manager::executor::create_index;
+use storage_manager::executor::create_index::{create_index, create_index_with_flags, ensure_fk_parent_indexes};
 
 use crate::db;
 use crate::handlers::helpers::save_table_constraint;
@@ -165,19 +165,40 @@ pub fn handle_create_table(
         save_table_constraint(&db, &params.table, &tc.definition);
     }
 
-    // Auto-create B+ Tree indexes on PRIMARY KEY, UNIQUE, and REFERENCES columns
+    // Auto-create B+ Tree indexes on PRIMARY KEY, UNIQUE, and REFERENCES columns.
+    //
+    // PK/UNIQUE indexes are marked UNIQUE (is_unique=true) so the UNIQUE
+    // checker uses them as its fast path instead of an O(n) heap scan per
+    // row; the FK child index stays non-unique (it accelerates parent-side
+    // referencing checks, which are existence probes).
     for col in &params.columns {
         let has_pk = col.constraints.iter().any(|c| c.eq_ignore_ascii_case("PRIMARY KEY"));
         if has_pk {
             let index_name = format!("pk_{}_{}", params.table, col.name);
-            if let Err(e) = create_index(catalog, &db, &params.table, &index_name, std::slice::from_ref(&col.name)) {
+            if let Err(e) = create_index_with_flags(
+                catalog,
+                &db,
+                &params.table,
+                &index_name,
+                std::slice::from_ref(&col.name),
+                true,
+                true,
+            ) {
                 eprintln!("Warning: failed to auto-create PRIMARY KEY index: {}", e);
             }
         }
         let has_unique = col.constraints.iter().any(|c| c.eq_ignore_ascii_case("UNIQUE"));
         if has_unique && !has_pk {
             let index_name = format!("uq_{}_{}", params.table, col.name);
-            if let Err(e) = create_index(catalog, &db, &params.table, &index_name, std::slice::from_ref(&col.name)) {
+            if let Err(e) = create_index_with_flags(
+                catalog,
+                &db,
+                &params.table,
+                &index_name,
+                std::slice::from_ref(&col.name),
+                true,
+                false,
+            ) {
                 eprintln!("Warning: failed to auto-create UNIQUE index: {}", e);
             }
         }
@@ -198,7 +219,7 @@ pub fn handle_create_table(
                 let cols: Vec<String> = cols_str.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
                 if !cols.is_empty() {
                     let index_name = format!("pk_{}_{}", params.table, cols.join("_"));
-                    let _ = create_index(catalog, &db, &params.table, &index_name, &cols);
+                    let _ = create_index_with_flags(catalog, &db, &params.table, &index_name, &cols, true, true);
                 }
             }
         } else if def_upper.starts_with("UNIQUE") {
@@ -206,7 +227,7 @@ pub fn handle_create_table(
                 let cols: Vec<String> = cols_str.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
                 if !cols.is_empty() {
                     let index_name = format!("uq_{}_{}", params.table, cols.join("_"));
-                    let _ = create_index(catalog, &db, &params.table, &index_name, &cols);
+                    let _ = create_index_with_flags(catalog, &db, &params.table, &index_name, &cols, true, false);
                 }
             }
         } else if def_upper.starts_with("FOREIGN KEY") {
@@ -219,6 +240,46 @@ pub fn handle_create_table(
             }
         }
     }
+
+    // Auto-create parent-side FK indexes.
+    //
+    // FK enforcement probes the PARENT table for every child insert
+    // (`value_exists_in_table`); without an index on the referenced column
+    // that probe is a full parent-table scan. Two passes:
+    //
+    // 1. Every `REFERENCES parent(col)` this table declares — covers the
+    //    normal case where the parent already exists.
+    // 2. Deferred: if the parent is created LATER, `ensure_fk_parent_indexes`
+    //    (invoked by handle_create_table after every CREATE TABLE) indexes
+    //    its referenced columns then.
+    for tc in &params.constraints {
+        let def_upper = tc.definition.to_ascii_uppercase();
+        if !def_upper.starts_with("FOREIGN KEY (") {
+            continue;
+        }
+        let off = "FOREIGN KEY (".len();
+        let rest_u = &def_upper[off..];
+        let Some(end_paren) = rest_u.find(')') else { continue };
+        let after_paren_u = def_upper[off + end_paren + 1..].trim_start();
+        let Some(ref_rest_u) = after_paren_u.strip_prefix("REFERENCES ") else { continue };
+        let Some(ref_start) = ref_rest_u.find('(') else { continue };
+        let ref_table = ref_rest_u[..ref_start].trim();
+        let ref_cols_rest = &ref_rest_u[ref_start + 1..];
+        let Some(ref_end) = ref_cols_rest.rfind(')') else { continue };
+        for ref_col in ref_cols_rest[..ref_end].split(',') {
+            let ref_col = ref_col.trim();
+            if !ref_col.is_empty() {
+                storage_manager::executor::create_index::ensure_parent_column_index(
+                    catalog, &db, ref_table, ref_col,
+                );
+            }
+        }
+    }
+
+    // Deferred parent-side indexing: if OTHER tables reference THIS table's
+    // columns but it did not exist when they were created (forward
+    // references), index those referenced columns now that it does.
+    ensure_fk_parent_indexes(catalog, &db, &params.table);
 
     Ok(())
 }
