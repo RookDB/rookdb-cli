@@ -165,13 +165,57 @@ pub fn handle_create_table(
         save_table_constraint(&db, &params.table, &tc.definition);
     }
 
-    // Auto-create B+ Tree index on PRIMARY KEY columns
+    // Auto-create B+ Tree indexes on PRIMARY KEY, UNIQUE, and REFERENCES columns
     for col in &params.columns {
         let has_pk = col.constraints.iter().any(|c| c.eq_ignore_ascii_case("PRIMARY KEY"));
         if has_pk {
             let index_name = format!("pk_{}_{}", params.table, col.name);
             if let Err(e) = create_index(catalog, &db, &params.table, &index_name, std::slice::from_ref(&col.name)) {
                 eprintln!("Warning: failed to auto-create PRIMARY KEY index: {}", e);
+            }
+        }
+        let has_unique = col.constraints.iter().any(|c| c.eq_ignore_ascii_case("UNIQUE"));
+        if has_unique && !has_pk {
+            let index_name = format!("uq_{}_{}", params.table, col.name);
+            if let Err(e) = create_index(catalog, &db, &params.table, &index_name, std::slice::from_ref(&col.name)) {
+                eprintln!("Warning: failed to auto-create UNIQUE index: {}", e);
+            }
+        }
+        for c in &col.constraints {
+            let upper = c.to_uppercase();
+            if upper.starts_with("REFERENCES") {
+                let index_name = format!("fk_{}_{}", params.table, col.name);
+                let _ = create_index(catalog, &db, &params.table, &index_name, std::slice::from_ref(&col.name));
+            }
+        }
+    }
+
+    // Auto-create indexes for table-level constraints
+    for tc in &params.constraints {
+        let def_upper = tc.definition.to_uppercase();
+        if def_upper.starts_with("PRIMARY KEY") {
+            if let Some(cols_str) = tc.definition.split('(').nth(1).and_then(|s| s.split(')').next()) {
+                let cols: Vec<String> = cols_str.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                if !cols.is_empty() {
+                    let index_name = format!("pk_{}_{}", params.table, cols.join("_"));
+                    let _ = create_index(catalog, &db, &params.table, &index_name, &cols);
+                }
+            }
+        } else if def_upper.starts_with("UNIQUE") {
+            if let Some(cols_str) = tc.definition.split('(').nth(1).and_then(|s| s.split(')').next()) {
+                let cols: Vec<String> = cols_str.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                if !cols.is_empty() {
+                    let index_name = format!("uq_{}_{}", params.table, cols.join("_"));
+                    let _ = create_index(catalog, &db, &params.table, &index_name, &cols);
+                }
+            }
+        } else if def_upper.starts_with("FOREIGN KEY") {
+            if let Some(first_paren) = tc.definition.split('(').nth(1).and_then(|s| s.split(')').next()) {
+                let cols: Vec<String> = first_paren.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                if !cols.is_empty() {
+                    let index_name = format!("fk_{}_{}", params.table, cols.join("_"));
+                    let _ = create_index(catalog, &db, &params.table, &index_name, &cols);
+                }
             }
         }
     }

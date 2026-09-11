@@ -32,6 +32,7 @@ use std::io::{self, Write};
 fn main() -> io::Result<()> {
     storage_manager::backend::executor::row_select::register_where_parser(rook_parser::parse_where_text);
     storage_manager::backend::cache::register_check_parser(rook_parser::parse_check_expr);
+    storage_manager::backend::planner::plan_cache::register_sql_parser(rook_parser::parse_sql);
 
     println!("--------------------------------------");
     println!("Welcome to RookDB");

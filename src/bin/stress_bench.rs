@@ -247,9 +247,25 @@ fn bench_engine(n: u64, tag: &str, with_index: bool) {
 
 fn count_via_sql(catalog: &Catalog, db: &str, sql: &str) -> Result<u64, String> {
     use storage_manager::types::DataValue;
-    let plan = rook_parser::parse_sql(sql)?;
-    let logical = storage_manager::planner::plan_query(&plan, catalog, db)
-        .map_err(|e| e.to_string())?;
+    let (norm, params) = storage_manager::backend::planner::plan_cache::normalize_sql(sql);
+    let logical = if params.is_empty()
+        && let Some(storage_manager::backend::planner::plan_cache::PlanCacheEntry::Plan(p)) =
+            storage_manager::backend::planner::plan_cache::get_cached_plan(db, &norm)
+    {
+        p
+    } else {
+        let plan = rook_parser::parse_sql(sql)?;
+        let logical = storage_manager::planner::plan_query(&plan, catalog, db)
+            .map_err(|e| e.to_string())?;
+        if params.is_empty() {
+            storage_manager::backend::planner::plan_cache::store_cached_plan(
+                db,
+                &norm,
+                storage_manager::backend::planner::plan_cache::PlanCacheEntry::Plan(logical.clone()),
+            );
+        }
+        logical
+    };
     let tuples =
         storage_manager::backend::executor::physical::engine::execute_plan_collect(
             &logical, catalog, db,
@@ -288,6 +304,9 @@ fn bench_pipeline(n: u64, tag: &str) {
 }
 
 fn route_insert(catalog: &Catalog, db: &str, sql: &str) -> Result<usize, String> {
+    if let Some(count) = storage_manager::backend::planner::plan_cache::execute_cached_insert(catalog, db, sql)? {
+        return Ok(count);
+    }
     use rook_ast::QueryPlan;
     let plan = rook_parser::parse_sql(sql)?;
     match plan {
@@ -439,6 +458,7 @@ fn main() {
     let _ = env_logger::try_init();
     storage_manager::backend::executor::row_select::register_where_parser(rook_parser::parse_where_text);
     storage_manager::backend::cache::register_check_parser(rook_parser::parse_check_expr);
+    storage_manager::backend::planner::plan_cache::register_sql_parser(rook_parser::parse_sql);
 
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
