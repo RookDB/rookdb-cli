@@ -407,6 +407,10 @@ pub fn execute_alter_table(
                     .map_err(|e| io::Error::other(format!("Failed to rename backfill heap: {}", e)))?;
                 let _ = std::fs::rename(&tmp_fsm_path, &fsm_path);
 
+                // Evict cached heap manager and shared buffer pool for the swapped path
+                storage_manager::backend::buffer_manager::shared_pool::invalidate(std::path::Path::new(&dat_path));
+                let _ = storage_manager::backend::cache::evict_heap(std::path::Path::new(&dat_path));
+
                 // Remove stale index files — they reference old heap page/slot locations
                 remove_index_files_for_table(db, &alter.table, None);
             }
@@ -485,6 +489,10 @@ pub fn execute_alter_table(
                 std::fs::rename(&tmp_path, &dat_path)
                     .map_err(|e| io::Error::other(format!("Failed to rename backfill heap: {}", e)))?;
                 let _ = std::fs::rename(&tmp_fsm_path, &fsm_path);
+
+                // Evict cached heap manager and shared buffer pool for the swapped path
+                storage_manager::backend::buffer_manager::shared_pool::invalidate(std::path::Path::new(&dat_path));
+                let _ = storage_manager::backend::cache::evict_heap(std::path::Path::new(&dat_path));
 
                 // Remove stale index files
                 remove_index_files_for_table(db, &alter.table, None);

@@ -158,7 +158,10 @@ pub fn expr_to_debug_string(expr: &ExprNode) -> String {
     match expr {
         ExprNode::Column(name) => name.clone(),
         ExprNode::Compound(parts) => parts.join("."),
-        ExprNode::Constant(cv) => convert::constant_to_raw_string(cv),
+        ExprNode::Constant(cv) => match cv {
+            rook_ast::ConstantValue::Text(s) => format!("'{}'", s.replace('\'', "''")),
+            other => convert::constant_to_raw_string(other),
+        },
         ExprNode::Binary { left, op, right } => {
             let op_str = match op {
                 ArithOp::Add => "+",
