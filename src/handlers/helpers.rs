@@ -134,7 +134,11 @@ pub fn find_matching_paren(s: &str) -> Option<usize> {
 }
 
 /// Convert an `ExprNode` to a value string for INSERT processing.
-#[allow(dead_code)] // retained for future INSERT rendering needs
+///
+/// Currently unused (CASE-in-VALUES is fully supported by the physical
+/// `ValuesOperator` path, so this renderer is not needed); retained as a
+/// utility for future INSERT rendering needs.
+#[allow(dead_code)]
 pub fn value_expr_to_string(expr: &ExprNode) -> String {
     match expr {
         ExprNode::Constant(cv) => convert::constant_to_raw_string(cv),
@@ -145,9 +149,18 @@ pub fn value_expr_to_string(expr: &ExprNode) -> String {
             format!("-{}", value_expr_to_string(right))
         }
         ExprNode::Case { when_then_pairs, else_result } => {
-            // CASE expressions in VALUES are not supported; return a placeholder
-            let _ = (when_then_pairs, else_result);
-            "NULL".to_string()
+            // Render CASE back to SQL text
+            let parts: Vec<String> = when_then_pairs
+                .iter()
+                .map(|(cond, res)| {
+                    format!("WHEN {} THEN {}", value_expr_to_string(cond), value_expr_to_string(res))
+                })
+                .collect();
+            let else_part = else_result
+                .as_ref()
+                .map(|e| format!(" ELSE {}", value_expr_to_string(e)))
+                .unwrap_or_default();
+            format!("CASE {} END{}", parts.join(" "), else_part)
         }
         _ => format!("{:?}", expr), // fallback
     }
