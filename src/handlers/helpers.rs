@@ -1,4 +1,4 @@
-use rook_ast::{ArithOp, ConstantValue, ExprNode};
+use rook_ast::{ArithOp, BinaryOp, ComparisonOp, ConstantValue, ExprNode};
 
 use crate::convert;
 
@@ -181,6 +181,37 @@ pub fn expr_to_debug_string(expr: &ExprNode) -> String {
             expr_to_debug_string(expr),
             data_type
         ),
+        ExprNode::Compare { left, op, right } => {
+            let op_str = match op {
+                ComparisonOp::Eq => "=",
+                ComparisonOp::Ne => "<>",
+                ComparisonOp::Lt => "<",
+                ComparisonOp::Le => "<=",
+                ComparisonOp::Gt => ">",
+                ComparisonOp::Ge => ">=",
+            };
+            format!(
+                "{} {} {}",
+                expr_to_debug_string(left),
+                op_str,
+                expr_to_debug_string(right)
+            )
+        }
+        ExprNode::Logical { left, op, right } => {
+            let op_str = match op {
+                BinaryOp::And => "AND",
+                BinaryOp::Or => "OR",
+            };
+            format!(
+                "{} {} {}",
+                expr_to_debug_string(left),
+                op_str,
+                expr_to_debug_string(right)
+            )
+        }
+        ExprNode::Not(inner) => format!("NOT {}", expr_to_debug_string(inner)),
+        ExprNode::IsNull(inner) => format!("{} IS NULL", expr_to_debug_string(inner)),
+        ExprNode::IsNotNull(inner) => format!("{} IS NOT NULL", expr_to_debug_string(inner)),
         ExprNode::ScalarSubquery(_) => "(scalar subquery)".to_string(),
         ExprNode::Function { name, args, .. } => {
             let arg_strs: Vec<String> = args

@@ -26,3 +26,4 @@ storage_manager = { path = "../RookDB" }
 serde_json = "1.0.150"
 serde = "1.0.228"
 env_logger = "0.11"
+log = "0.4"

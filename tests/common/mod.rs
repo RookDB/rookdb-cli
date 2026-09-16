@@ -91,7 +91,7 @@ pub fn run_one(ws: &Workspace, sql: &str) -> String {
 //     ┌────────┬────────┐
 //     │ id: INT│ name   │      header cells: "name: TYPE"
 //     ├────────┼────────┤
-//     │   1 │ 1    │ 'x' │  data rows: first cell is the row number,
+//     │ 1  │ 1 │ 'x'    │  data rows: first cell is the row number,
 //     └────────┴────────┘      remaining cells are the values
 //
 // `parse_result_table` strips borders and the row-number column so tests can
@@ -174,8 +174,13 @@ pub fn parse_tables(output: &str) -> Vec<QueryTable> {
                     continue;
                 }
                 if t.rows.is_empty() && t.columns.is_empty() {
-                    // header line: cells are "name: TYPE"
-                    for c in cells {
+                    // header line: cells are "name: TYPE" (leading row# cell without ':' is skipped)
+                    let header_cells = if cells.first().map_or(false, |c| !c.contains(':')) {
+                        &cells[1..]
+                    } else {
+                        &cells[..]
+                    };
+                    for c in header_cells {
                         let name = c.rsplit_once(": ").map(|(n, _)| n).unwrap_or(c).to_string();
                         t.columns.push(name);
                     }

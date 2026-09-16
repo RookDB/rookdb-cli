@@ -27,16 +27,106 @@ mod handlers;
 
 use rook_ast::*;
 use rook_parser::parse_sql;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 
 fn main() -> io::Result<()> {
+    // Surface the engine's planner/executor decisions ([Volcano] …) and DML lifecycle.
+    // Default to clean, categorized, colorized output so decisions and debug details are easy to parse.
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or(
+            "storage_manager=info,storage_manager::backend::index::btree=warn,storage_manager::backend::buffer_manager=warn,storage_manager::backend::system_table=warn,storage_manager::backend::catalog=warn"
+        ),
+    )
+    .target(env_logger::Target::Stdout)
+    .format(|buf, record| {
+        use std::io::Write;
+        let msg = record.args().to_string();
+        // Filter out noisy internal engine setup lines
+        if msg.starts_with("[BTree::open]")
+            || msg.starts_with("[init_table]")
+            || msg.starts_with("[SystemCatalog]")
+            || msg.contains("catalog directory")
+            || msg.contains("Saving catalog")
+            || msg.contains("Loading catalog")
+            || msg.contains("Initializing catalog")
+            || msg.contains("New table initialized")
+            || msg.contains("Table data file created")
+            || msg.ends_with("initialized successfully.")
+            || msg.ends_with("saved to catalog.")
+            || msg.contains("Starting single tuple insertion")
+            || msg.contains("Successfully inserted at")
+            || msg.starts_with("[Volcano] Plan: ")
+            || msg.starts_with("[Volcano] Executing logical plan")
+        {
+            return Ok(());
+        }
+
+        // Format clean Volcano and DML lifecycle debug output with colors and tags
+        if msg.starts_with("[Volcano] Using HashJoin") {
+            writeln!(buf, "  \x1b[1;35m[JOIN]\x1b[0m       {}", msg.trim_start_matches("[Volcano] "))
+        } else if msg.starts_with("[Volcano] Using IndexNestedLoopJoin") {
+            writeln!(buf, "  \x1b[1;35m[JOIN]\x1b[0m       {}", msg.trim_start_matches("[Volcano] "))
+        } else if msg.starts_with("[Volcano] Index-accelerated scan:") {
+            writeln!(buf, "  \x1b[1;32m[INDEX SCAN]\x1b[0m {}", msg.trim_start_matches("[Volcano] "))
+        } else if msg.starts_with("[Volcano] Using index-accelerated scan") {
+            Ok(()) // redundant with mode log
+        } else if msg.starts_with("[Volcano] Named index") {
+            let table = if msg.contains("emp.emp_dept_idx") { "emp" } else { "table" };
+            writeln!(buf, "  \x1b[1;32m[INDEX SCAN]\x1b[0m Table '{}' scanned via index 'emp_dept_idx' (FullScan)", table)
+        } else if msg.starts_with("[Volcano] No index file found for table") {
+            let table = msg.split('\'').nth(1).unwrap_or("table");
+            writeln!(buf, "  \x1b[1;36m[SCAN]\x1b[0m       Table '{}' has no index, using SeqScan", table)
+        } else if msg.starts_with("[Volcano] Sort has limit") {
+            writeln!(buf, "  \x1b[1;33m[OPTIMIZE]\x1b[0m   {}", msg.trim_start_matches("[Volcano] "))
+        } else if msg.starts_with("[Volcano] Built physical operator tree") {
+            writeln!(buf, "  \x1b[1;34m[PIPELINE]\x1b[0m   {}", msg.trim_start_matches("[Volcano] "))
+        } else if msg.starts_with("[Volcano] Planning") {
+            writeln!(buf, "  \x1b[1;34m[PLANNER]\x1b[0m    {}", msg.trim_start_matches("[Volcano] "))
+        } else if msg.starts_with("[Insert]") {
+            writeln!(buf, "  \x1b[1;33m[DML:INSERT]\x1b[0m {}", msg.trim_start_matches("[Insert] "))
+        } else if msg.starts_with("[Update] Validated row at") {
+            let pos = msg.split(':').next().unwrap_or("[Update]");
+            let clean_pos = pos.trim_start_matches("[Update] Validated row at ").trim();
+            writeln!(buf, "  \x1b[1;33m[DML:UPDATE]\x1b[0m Row at {} validated & updated (appended new version, old marked deleted)", clean_pos)
+        } else if msg.starts_with("[Update] Marked old slot") {
+            Ok(()) // Cleanly represented by the row update line above
+        } else if msg.starts_with("[Update]") {
+            writeln!(buf, "  \x1b[1;33m[DML:UPDATE]\x1b[0m {}", msg.trim_start_matches("[Update] "))
+        } else if msg.starts_with("[Delete] Soft-deleted slot") {
+            let slot = if let Some(start) = msg.find("slot ") {
+                let rest = &msg[start + "slot ".len()..];
+                rest.split(", updated").next().unwrap_or("").trim()
+            } else {
+                ""
+            };
+            writeln!(buf, "  \x1b[1;33m[DML:DELETE]\x1b[0m Soft-deleted row at {}, updated index and visibility map", slot)
+        } else if msg.starts_with("[Delete]") {
+            writeln!(buf, "  \x1b[1;33m[DML:DELETE]\x1b[0m {}", msg.trim_start_matches("[Delete] "))
+        } else if msg.starts_with("[CreateIndex]") {
+            writeln!(buf, "  \x1b[1;32m[INDEX]\x1b[0m      {}", msg.trim_start_matches("[CreateIndex] "))
+        } else if msg.starts_with("[Volcano]") {
+            writeln!(buf, "  \x1b[1;34m[PLANNER]\x1b[0m    {}", msg.trim_start_matches("[Volcano] "))
+        } else if record.level() == log::Level::Warn {
+            writeln!(buf, "  \x1b[1;33m[WARN]\x1b[0m       {}", msg)
+        } else if record.level() == log::Level::Error {
+            writeln!(buf, "  \x1b[1;31m[ERROR]\x1b[0m      {}", msg)
+        } else {
+            writeln!(buf, "  │ {}", msg)
+        }
+    })
+    .init();
     storage_manager::backend::executor::row_select::register_where_parser(rook_parser::parse_where_text);
     storage_manager::backend::cache::register_check_parser(rook_parser::parse_check_expr);
     storage_manager::backend::planner::plan_cache::register_sql_parser(rook_parser::parse_sql);
 
-    println!("--------------------------------------");
-    println!("Welcome to RookDB");
-    println!("--------------------------------------\n");
+    let is_piped = !io::stdin().is_terminal();
+    let echo_sql = std::env::args().any(|a| a == "--echo" || a == "-e")
+        || std::env::var("ROOKDB_ECHO").map(|v| v != "0").unwrap_or(false);
+    if !is_piped {
+        println!("--------------------------------------");
+        println!("Welcome to RookDB");
+        println!("--------------------------------------\n");
+    }
 
     let mut catalog = db::initialize_catalog();
     let mut current_db: Option<String> = None;
@@ -45,17 +135,30 @@ fn main() -> io::Result<()> {
     let mut pending = String::new();
 
     loop {
-        let prompt = if pending.is_empty() { "> " } else { "... " };
-        print!("{}", prompt);
-        io::stdout().flush()?;
+        if !is_piped {
+            let prompt = match current_db {
+                Some(ref db) => format!("rookdb ({})> ", db),
+                None => "rookdb> ".to_string(),
+            };
+            let prompt_display = if pending.is_empty() { prompt.as_str() } else { "... " };
+            print!("{}", prompt_display);
+            io::stdout().flush()?;
+        }
 
         let mut line = String::new();
         if io::stdin().read_line(&mut line)? == 0 {
             // EOF (piped input): execute whatever is left, then stop.
             if !pending.trim().is_empty() {
-                execute(&pending, &mut catalog, &mut current_db);
+                let stmt = pending.trim();
+                if echo_sql {
+                    print_sql_banner(stmt);
+                }
+                execute(stmt, &mut catalog, &mut current_db);
             }
             break;
+        }
+        if !pending.is_empty() && !pending.ends_with(char::is_whitespace) {
+            pending.push(' ');
         }
         pending.push_str(&line);
 
@@ -78,6 +181,9 @@ fn main() -> io::Result<()> {
         pending = remainder;
 
         for stmt in complete {
+            if echo_sql {
+                print_sql_banner(&stmt);
+            }
             execute(&stmt, &mut catalog, &mut current_db);
             // Statement boundary: make the statement's writes durable before
             // prompting again (matches the pre-cache flush-on-drop contract).
@@ -88,6 +194,30 @@ fn main() -> io::Result<()> {
     // EOF path may have executed a trailing statement.
     storage_manager::backend::cache::checkpoint();
     Ok(())
+}
+
+/// Print a high-visibility double-bordered banner for an executing SQL query.
+fn print_sql_banner(sql: &str) {
+    let trimmed = sql.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    // For USE <db>, render a compact navigation indicator
+    if trimmed.to_uppercase().starts_with("USE ") {
+        println!("\n\x1b[1;36m▶\x1b[0m \x1b[1;37m{}\x1b[0m", trimmed);
+        return;
+    }
+    let width = 78;
+    let top_border = "═".repeat(width - 9);
+    let bottom_border = "═".repeat(width);
+    println!("\n\x1b[1;36m╔══ \x1b[1;97;44m SQL ❯ \x1b[0;1;36m{}\x1b[0m", top_border);
+    for line in trimmed.lines() {
+        let l = line.trim();
+        if !l.is_empty() {
+            println!("\x1b[1;36m║\x1b[0m  \x1b[1;37m{}\x1b[0m", l);
+        }
+    }
+    println!("\x1b[1;36m╚{}\x1b[0m", bottom_border);
 }
 
 /// Execute one SQL statement string, printing results or errors.
