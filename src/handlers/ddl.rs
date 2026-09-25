@@ -398,6 +398,35 @@ pub fn handle_vacuum(
     Ok(())
 }
 
+/// Handle ANALYZE — collect column-level statistics (histograms, HLL distinct counts).
+pub fn handle_analyze(
+    catalog: &mut Catalog,
+    current_db: &mut Option<String>,
+    params: &rook_ast::AnalyzePlan,
+) -> io::Result<()> {
+    let db = match current_db {
+        Some(db) => db.clone(),
+        None => {
+            println!("No database selected. Use 'USE <database>' first.");
+            return Ok(());
+        }
+    };
+
+    match storage_manager::backend::executor::analyze::analyze_table(catalog, &db, &params.table) {
+        Ok(stats) => {
+            println!(
+                "ANALYZE '{}.{}' complete: {} tuple(s) analyzed across {} column(s). Statistics persisted in sys_statistics.",
+                db,
+                params.table,
+                stats.tuples_analyzed,
+                stats.columns_analyzed
+            );
+        }
+        Err(e) => println!("ANALYZE failed: {}", e),
+    }
+    Ok(())
+}
+
 /// Handle CREATE TABLE AS SELECT
 pub fn handle_create_table_as_select(
     catalog: &mut Catalog,
