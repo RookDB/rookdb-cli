@@ -465,11 +465,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
+name = "rook-ast"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "rook-parser"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99158834b489905bbb71e7196ea02435bf478cca8939f229ef97c500cd441817"
 dependencies = [
+ "rook-ast",
  "serde",
  "serde_json",
  "sqlparser",
@@ -479,6 +485,9 @@ dependencies = [
 name = "rookdb-cli"
 version = "0.1.0"
 dependencies = [
+ "env_logger",
+ "log",
+ "rook-ast",
  "rook-parser",
  "serde",
  "serde_json",
@@ -573,13 +582,12 @@ dependencies = [
 [[package]]
 name = "storage_manager"
 version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f037c3a4ee629448f512f030e4b335fec9459a8e908ea76432eaea4f27d50e70"
 dependencies = [
  "chrono",
  "env_logger",
  "log",
  "regex",
+ "rook-ast",
  "serde",
  "serde_json",
  "sqlparser",
