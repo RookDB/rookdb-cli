@@ -2,9 +2,9 @@ use std::io;
 
 use rook_ast::*;
 use storage_manager::catalog::Catalog;
+use storage_manager::executor::delete_by_pointers;
 use storage_manager::executor::physical::execute_plan_collect;
 use storage_manager::executor::update_by_pointers;
-use storage_manager::executor::delete_by_pointers;
 
 use crate::handlers::helpers::expr_to_debug_string;
 
@@ -72,7 +72,10 @@ pub fn handle_update(
     let select_plan = SelectPlan {
         ctes: vec![],
         projections: vec![SelectExpr::Wildcard],
-        from: vec![TableRef { name: upd.table.clone(), alias: None }],
+        from: vec![TableRef {
+            name: upd.table.clone(),
+            alias: None,
+        }],
         joins: vec![],
         selection: upd.selection.clone(),
         group_by: vec![],
@@ -88,29 +91,34 @@ pub fn handle_update(
     // empty result simply means zero affected rows — no legacy fallback.
     let tuples = match storage_manager::planner::plan_query(&query_plan, catalog, &db)
         .map_err(|e| format!("Plan error: {}", e))
-        .and_then(|logical_plan| execute_plan_collect(&logical_plan, catalog, &db).map_err(|e| e.to_string()))
-    {
+        .and_then(|logical_plan| {
+            execute_plan_collect(&logical_plan, catalog, &db).map_err(|e| e.to_string())
+        }) {
         Ok(tuples) => tuples,
         Err(e) => {
             println!("Update failed: {}", e);
             return Ok(());
         }
     };
-    let pointers: Vec<(u32, u32)> = tuples.iter().filter_map(|t| {
-        match (t.page_id, t.slot_id) {
+    let pointers: Vec<(u32, u32)> = tuples
+        .iter()
+        .filter_map(|t| match (t.page_id, t.slot_id) {
             (Some(page), Some(slot)) => Some((page, slot)),
             _ => None,
-        }
-    }).collect();
+        })
+        .collect();
     if pointers.len() != tuples.len() {
         println!("Update failed: engine returned rows without heap locations");
         return Ok(());
     }
 
     // Build parsed SET assignments from the AST
-    let set_str = upd.assignments.iter()
+    let set_str = upd
+        .assignments
+        .iter()
         .map(|a| format!("{} = {}", a.column, expr_to_debug_string(&a.value)))
-        .collect::<Vec<_>>().join(", ");
+        .collect::<Vec<_>>()
+        .join(", ");
     let assignments = match storage_manager::executor::parse_set_clause(&set_str) {
         Some(a) => a,
         None => {
@@ -153,7 +161,10 @@ pub fn handle_delete(
     let select_plan = SelectPlan {
         ctes: vec![],
         projections: vec![SelectExpr::Wildcard],
-        from: vec![TableRef { name: del.table.clone(), alias: None }],
+        from: vec![TableRef {
+            name: del.table.clone(),
+            alias: None,
+        }],
         joins: vec![],
         selection: del.selection.clone(),
         group_by: vec![],
@@ -167,20 +178,22 @@ pub fn handle_delete(
     // Volcano is the single row-selection path (see handle_update).
     let tuples = match storage_manager::planner::plan_query(&query_plan, catalog, &db)
         .map_err(|e| format!("Plan error: {}", e))
-        .and_then(|logical_plan| execute_plan_collect(&logical_plan, catalog, &db).map_err(|e| e.to_string()))
-    {
+        .and_then(|logical_plan| {
+            execute_plan_collect(&logical_plan, catalog, &db).map_err(|e| e.to_string())
+        }) {
         Ok(tuples) => tuples,
         Err(e) => {
             println!("Delete failed: {}", e);
             return Ok(());
         }
     };
-    let pointers: Vec<(u32, u32)> = tuples.iter().filter_map(|t| {
-        match (t.page_id, t.slot_id) {
+    let pointers: Vec<(u32, u32)> = tuples
+        .iter()
+        .filter_map(|t| match (t.page_id, t.slot_id) {
             (Some(page), Some(slot)) => Some((page, slot)),
             _ => None,
-        }
-    }).collect();
+        })
+        .collect();
     if pointers.len() != tuples.len() {
         println!("Delete failed: engine returned rows without heap locations");
         return Ok(());

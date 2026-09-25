@@ -26,7 +26,6 @@ impl Workspace {
         std::fs::create_dir_all(&path).expect("create workspace");
         Workspace { path }
     }
-
 }
 
 impl Drop for Workspace {
@@ -152,18 +151,18 @@ pub fn parse_tables(output: &str) -> Vec<QueryTable> {
                 if let Some(t) = cur.take() {
                     tables.push(t);
                 }
-                cur = Some(QueryTable { columns: vec![], rows: vec![] });
+                cur = Some(QueryTable {
+                    columns: vec![],
+                    rows: vec![],
+                });
             }
             Some('│') => {
                 let Some(t) = cur.as_mut() else {
-                    panic!(
-                        "result cell outside of any table: {:?}",
-                        line
-                    );
+                    panic!("result cell outside of any table: {:?}", line);
                 };
                 let cells: Vec<String> = line
                     .split('│')
-                    .skip(1)                       // text before first border
+                    .skip(1) // text before first border
                     .map(str::trim)
                     .map(String::from)
                     .collect();

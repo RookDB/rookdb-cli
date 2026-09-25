@@ -12,7 +12,7 @@
 
 mod common;
 
-use common::{expect_rows, run, Workspace};
+use common::{Workspace, expect_rows, run};
 
 /// emp(id, name, salary) — six rows, `salary = 62000` duplicated.
 const SETUP: &[&str] = &[
@@ -46,11 +46,7 @@ fn ws_with_index(name: &str) -> Workspace {
         &ws,
         &[SETUP, &["CREATE INDEX by_salary ON emp(salary);"]].concat(),
     );
-    assert!(
-        out.contains("Created index"),
-        "setup failed:\n{}",
-        out
-    );
+    assert!(out.contains("Created index"), "setup failed:\n{}", out);
     ws
 }
 
@@ -63,9 +59,7 @@ fn point_lookup_returns_exact_row() {
         &ws,
         &["USE pay;"],
         "SELECT name FROM emp WHERE salary = 91000;",
-        &[
-            &["'Dee'"],
-        ],
+        &[&["'Dee'"]],
     );
 }
 
@@ -78,10 +72,7 @@ fn point_lookup_with_duplicate_keys_returns_all_matches() {
         &ws,
         &["USE pay;"],
         "SELECT name FROM emp WHERE salary = 62000;",
-        &[
-            &["'Ben'"],
-            &["'Fay'"],
-        ],
+        &[&["'Ben'"], &["'Fay'"]],
     );
 }
 
@@ -93,13 +84,7 @@ fn between_is_inclusive_on_both_bounds() {
         &ws,
         &["USE pay;"],
         "SELECT name FROM emp WHERE salary BETWEEN 48000 AND 80000;",
-        &[
-            &["'Eve'"],
-            &["'Ann'"],
-            &["'Ben'"],
-            &["'Fay'"],
-            &["'Cy'"],
-        ],
+        &[&["'Eve'"], &["'Ann'"], &["'Ben'"], &["'Fay'"], &["'Cy'"]],
     );
 }
 
@@ -110,10 +95,7 @@ fn greater_than_excludes_bound() {
         &ws,
         &["USE pay;"],
         "SELECT name FROM emp WHERE salary > 70000;",
-        &[
-            &["'Cy'"],
-            &["'Dee'"],
-        ],
+        &[&["'Cy'"], &["'Dee'"]],
     );
 }
 
@@ -124,12 +106,7 @@ fn less_equal_includes_bound() {
         &ws,
         &["USE pay;"],
         "SELECT name FROM emp WHERE salary <= 62000;",
-        &[
-            &["'Eve'"],
-            &["'Ann'"],
-            &["'Ben'"],
-            &["'Fay'"],
-        ],
+        &[&["'Eve'"], &["'Ann'"], &["'Ben'"], &["'Fay'"]],
     );
 }
 
@@ -140,9 +117,7 @@ fn single_element_in_uses_point_lookup() {
         &ws,
         &["USE pay;"],
         "SELECT name FROM emp WHERE salary IN (91000);",
-        &[
-            &["'Dee'"],
-        ],
+        &[&["'Dee'"]],
     );
 }
 
@@ -154,12 +129,7 @@ fn and_range_intersects_into_one_interval() {
         &ws,
         &["USE pay;"],
         "SELECT name FROM emp WHERE salary > 48000 AND salary < 91000;",
-        &[
-            &["'Ann'"],
-            &["'Ben'"],
-            &["'Fay'"],
-            &["'Cy'"],
-        ],
+        &[&["'Ann'"], &["'Ben'"], &["'Fay'"], &["'Cy'"]],
     );
 }
 
@@ -173,7 +143,10 @@ fn indexed_and_sequential_paths_return_identical_results() {
     let idx_ws = common::Workspace::new("equiv_idx");
     let ni_ws = common::Workspace::new("equiv_seq");
 
-    let out = run(&idx_ws, &[SETUP, &["CREATE INDEX by_salary ON emp(salary);"]].concat());
+    let out = run(
+        &idx_ws,
+        &[SETUP, &["CREATE INDEX by_salary ON emp(salary);"]].concat(),
+    );
     assert!(out.contains("Created index"), "{}", out);
     let out = run(&ni_ws, SETUP_NO_INDEX);
     assert!(!out.to_lowercase().contains("error"), "{}", out);
@@ -198,9 +171,7 @@ fn indexed_and_sequential_paths_return_identical_results() {
         assert_eq!(
             a, b,
             "access paths disagree for `{}`\nvia index:\n{:#?}\nvia scan:\n{:#?}",
-            q,
-            via_index.rows,
-            via_scan.rows
+            q, via_index.rows, via_scan.rows
         );
     }
 }

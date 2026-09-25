@@ -12,7 +12,7 @@
 
 mod common;
 
-use common::{expect_rows, run, Workspace};
+use common::{Workspace, expect_rows, run};
 
 const SETUP: &[&str] = &[
     "CREATE DATABASE casetest;",
@@ -59,29 +59,27 @@ fn fk_references_resolve_with_original_letter_case() {
         "RESTRICT must prevent the delete:\n{}",
         out
     );
-    expect_rows(
-        &ws,
-        &["USE casetest;"],
-        "SELECT ID FROM Depts;",
-        &[&["1"]],
-    );
+    expect_rows(&ws, &["USE casetest;"], "SELECT ID FROM Depts;", &[&["1"]]);
 }
 
 #[test]
 fn fk_on_delete_cascade_works_with_mixed_case_names() {
     let ws = Workspace::new("fkcase2");
 
-    let out = run(&ws, &[
-        "CREATE DATABASE casetest2;",
-        "USE casetest2;",
-        "CREATE TABLE Orders_2 (OID INT PRIMARY KEY);",
-        "CREATE TABLE lines_2 (lid INT, oid INT, \
+    let out = run(
+        &ws,
+        &[
+            "CREATE DATABASE casetest2;",
+            "USE casetest2;",
+            "CREATE TABLE Orders_2 (OID INT PRIMARY KEY);",
+            "CREATE TABLE lines_2 (lid INT, oid INT, \
              FOREIGN KEY (oid) REFERENCES Orders_2(OID) ON DELETE CASCADE);",
-        "INSERT INTO Orders_2 VALUES (7);",
-        "INSERT INTO lines_2 VALUES (1, 7);",
-        "INSERT INTO lines_2 VALUES (2, 7);",
-        "DELETE FROM Orders_2 WHERE OID = 7;",
-    ]);
+            "INSERT INTO Orders_2 VALUES (7);",
+            "INSERT INTO lines_2 VALUES (1, 7);",
+            "INSERT INTO lines_2 VALUES (2, 7);",
+            "DELETE FROM Orders_2 WHERE OID = 7;",
+        ],
+    );
     assert!(
         !out.to_lowercase().contains("error"),
         "setup failed:\n{}",

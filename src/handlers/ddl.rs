@@ -2,10 +2,13 @@ use std::io;
 use std::str::FromStr;
 
 use rook_ast::*;
-use storage_manager::catalog::{create_database, create_table, Catalog};use storage_manager::catalog::Column;
+use storage_manager::catalog::Column;
 use storage_manager::catalog::Constraints;
+use storage_manager::catalog::{Catalog, create_database, create_table};
+use storage_manager::executor::create_index::{
+    create_index, create_index_with_flags, ensure_fk_parent_indexes,
+};
 use storage_manager::types::DataType;
-use storage_manager::executor::create_index::{create_index, create_index_with_flags, ensure_fk_parent_indexes};
 
 use crate::db;
 use crate::handlers::helpers::save_table_constraint;
@@ -37,7 +40,10 @@ pub fn handle_drop_database(
 
     if !catalog.databases.contains_key(db_name) {
         if params.if_exists {
-            println!("Database '{}' does not exist (IF EXISTS specified, skipping).", db_name);
+            println!(
+                "Database '{}' does not exist (IF EXISTS specified, skipping).",
+                db_name
+            );
         } else {
             println!("Database '{}' does not exist.", db_name);
         }
@@ -50,7 +56,10 @@ pub fn handle_drop_database(
     let _ = std::fs::remove_dir_all(&db_dir);
 
     if let Err(e) = storage_manager::backend::system_table::delete_database_metadata(db_name) {
-        eprintln!("[DropDatabase] Warning: failed to clean up system table metadata: {}", e);
+        eprintln!(
+            "[DropDatabase] Warning: failed to clean up system table metadata: {}",
+            e
+        );
     }
 
     if let Err(e) = storage_manager::catalog::save_catalog(catalog) {
@@ -58,9 +67,10 @@ pub fn handle_drop_database(
     }
 
     if let Some(ref cur) = *current_db
-        && cur == db_name {
-            *current_db = None;
-        }
+        && cur == db_name
+    {
+        *current_db = None;
+    }
 
     println!("Database '{}' dropped successfully.", db_name);
     Ok(())
@@ -112,9 +122,15 @@ pub fn handle_create_table(
         };
 
         let constraint_strs: Vec<&str> = col.constraints.iter().map(|s| s.as_str()).collect();
-        let not_null = constraint_strs.iter().any(|c| c.eq_ignore_ascii_case("NOT NULL") || c.eq_ignore_ascii_case("PRIMARY KEY"));
-        let unique = constraint_strs.iter().any(|c| c.eq_ignore_ascii_case("UNIQUE") || c.eq_ignore_ascii_case("PRIMARY KEY"));
-        let _has_primary = constraint_strs.iter().any(|c| c.eq_ignore_ascii_case("PRIMARY KEY"));
+        let not_null = constraint_strs
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case("NOT NULL") || c.eq_ignore_ascii_case("PRIMARY KEY"));
+        let unique = constraint_strs
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case("UNIQUE") || c.eq_ignore_ascii_case("PRIMARY KEY"));
+        let _has_primary = constraint_strs
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case("PRIMARY KEY"));
 
         let default_val = constraint_strs.iter().find_map(|c| {
             let upper = c.to_uppercase();
@@ -172,7 +188,10 @@ pub fn handle_create_table(
     // row; the FK child index stays non-unique (it accelerates parent-side
     // referencing checks, which are existence probes).
     for col in &params.columns {
-        let has_pk = col.constraints.iter().any(|c| c.eq_ignore_ascii_case("PRIMARY KEY"));
+        let has_pk = col
+            .constraints
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case("PRIMARY KEY"));
         if has_pk {
             let index_name = format!("pk_{}_{}", params.table, col.name);
             if let Err(e) = create_index_with_flags(
@@ -187,7 +206,10 @@ pub fn handle_create_table(
                 eprintln!("Warning: failed to auto-create PRIMARY KEY index: {}", e);
             }
         }
-        let has_unique = col.constraints.iter().any(|c| c.eq_ignore_ascii_case("UNIQUE"));
+        let has_unique = col
+            .constraints
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case("UNIQUE"));
         if has_unique && !has_pk {
             let index_name = format!("uq_{}_{}", params.table, col.name);
             if let Err(e) = create_index_with_flags(
@@ -206,7 +228,13 @@ pub fn handle_create_table(
             let upper = c.to_uppercase();
             if upper.starts_with("REFERENCES") {
                 let index_name = format!("fk_{}_{}", params.table, col.name);
-                let _ = create_index(catalog, &db, &params.table, &index_name, std::slice::from_ref(&col.name));
+                let _ = create_index(
+                    catalog,
+                    &db,
+                    &params.table,
+                    &index_name,
+                    std::slice::from_ref(&col.name),
+                );
             }
         }
     }
@@ -215,24 +243,67 @@ pub fn handle_create_table(
     for tc in &params.constraints {
         let def_upper = tc.definition.to_uppercase();
         if def_upper.starts_with("PRIMARY KEY") {
-            if let Some(cols_str) = tc.definition.split('(').nth(1).and_then(|s| s.split(')').next()) {
-                let cols: Vec<String> = cols_str.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+            if let Some(cols_str) = tc
+                .definition
+                .split('(')
+                .nth(1)
+                .and_then(|s| s.split(')').next())
+            {
+                let cols: Vec<String> = cols_str
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
                 if !cols.is_empty() {
                     let index_name = format!("pk_{}_{}", params.table, cols.join("_"));
-                    let _ = create_index_with_flags(catalog, &db, &params.table, &index_name, &cols, true, true);
+                    let _ = create_index_with_flags(
+                        catalog,
+                        &db,
+                        &params.table,
+                        &index_name,
+                        &cols,
+                        true,
+                        true,
+                    );
                 }
             }
         } else if def_upper.starts_with("UNIQUE") {
-            if let Some(cols_str) = tc.definition.split('(').nth(1).and_then(|s| s.split(')').next()) {
-                let cols: Vec<String> = cols_str.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+            if let Some(cols_str) = tc
+                .definition
+                .split('(')
+                .nth(1)
+                .and_then(|s| s.split(')').next())
+            {
+                let cols: Vec<String> = cols_str
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
                 if !cols.is_empty() {
                     let index_name = format!("uq_{}_{}", params.table, cols.join("_"));
-                    let _ = create_index_with_flags(catalog, &db, &params.table, &index_name, &cols, true, false);
+                    let _ = create_index_with_flags(
+                        catalog,
+                        &db,
+                        &params.table,
+                        &index_name,
+                        &cols,
+                        true,
+                        false,
+                    );
                 }
             }
         } else if def_upper.starts_with("FOREIGN KEY") {
-            if let Some(first_paren) = tc.definition.split('(').nth(1).and_then(|s| s.split(')').next()) {
-                let cols: Vec<String> = first_paren.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+            if let Some(first_paren) = tc
+                .definition
+                .split('(')
+                .nth(1)
+                .and_then(|s| s.split(')').next())
+            {
+                let cols: Vec<String> = first_paren
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
                 if !cols.is_empty() {
                     let index_name = format!("fk_{}_{}", params.table, cols.join("_"));
                     let _ = create_index(catalog, &db, &params.table, &index_name, &cols);
@@ -259,13 +330,21 @@ pub fn handle_create_table(
         }
         let off = "FOREIGN KEY (".len();
         let rest_u = &def_upper[off..];
-        let Some(end_paren) = rest_u.find(')') else { continue };
+        let Some(end_paren) = rest_u.find(')') else {
+            continue;
+        };
         let after_paren_u = def_upper[off + end_paren + 1..].trim_start();
-        let Some(ref_rest_u) = after_paren_u.strip_prefix("REFERENCES ") else { continue };
-        let Some(ref_start) = ref_rest_u.find('(') else { continue };
+        let Some(ref_rest_u) = after_paren_u.strip_prefix("REFERENCES ") else {
+            continue;
+        };
+        let Some(ref_start) = ref_rest_u.find('(') else {
+            continue;
+        };
         let ref_table = ref_rest_u[..ref_start].trim();
         let ref_cols_rest = &ref_rest_u[ref_start + 1..];
-        let Some(ref_end) = ref_cols_rest.rfind(')') else { continue };
+        let Some(ref_end) = ref_cols_rest.rfind(')') else {
+            continue;
+        };
         for ref_col in ref_cols_rest[..ref_end].split(',') {
             let ref_col = ref_col.trim();
             if !ref_col.is_empty() {
@@ -297,7 +376,13 @@ pub fn handle_drop_table(
             return Ok(());
         }
     };
-    db::execute_drop_table(catalog, &db, &params.table, params.if_exists, params.cascade)
+    db::execute_drop_table(
+        catalog,
+        &db,
+        &params.table,
+        params.if_exists,
+        params.cascade,
+    )
 }
 
 /// Handle ALTER TABLE
@@ -427,7 +512,13 @@ pub fn handle_drop_index(
             return Ok(());
         }
     };
-    db::execute_drop_index(catalog, &db, &params.index_name, &params.table_name, params.if_exists)
+    db::execute_drop_index(
+        catalog,
+        &db,
+        &params.index_name,
+        &params.table_name,
+        params.if_exists,
+    )
 }
 
 /// Handle CREATE INDEX
@@ -444,11 +535,21 @@ pub fn handle_create_index(
         }
     };
 
-    match create_index(catalog, &db, &params.table_name, &params.index_name, &params.columns) {
+    match create_index(
+        catalog,
+        &db,
+        &params.table_name,
+        &params.index_name,
+        &params.columns,
+    ) {
         Ok(count) => {
             println!(
                 "Created index '{}' on {}.{}({}) with {} entries.",
-                params.index_name, db, params.table_name, params.columns.join(","), count
+                params.index_name,
+                db,
+                params.table_name,
+                params.columns.join(","),
+                count
             );
         }
         Err(e) => {

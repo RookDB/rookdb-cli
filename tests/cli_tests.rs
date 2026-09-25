@@ -106,21 +106,24 @@ fn ensure_suite_init() {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if let Some(name) = path.file_name().and_then(|n| n.to_str())
-                    && name.starts_with("database_test_") {
-                        let should_clean = if let Some(pid_str) = name.strip_prefix("database_test_p") {
-                            // PID-prefixed: extract the PID (everything before the second '_')
-                            let pid = pid_str.split('_').next()
-                                .and_then(|s| s.parse::<u32>().ok())
-                                .unwrap_or(0);
-                            pid == 0 || !is_pid_alive(pid)
-                        } else {
-                            // Non-PID-prefixed: always safe to clean
-                            true
-                        };
-                        if should_clean {
-                            let _ = std::fs::remove_dir_all(&path);
-                        }
+                    && name.starts_with("database_test_")
+                {
+                    let should_clean = if let Some(pid_str) = name.strip_prefix("database_test_p") {
+                        // PID-prefixed: extract the PID (everything before the second '_')
+                        let pid = pid_str
+                            .split('_')
+                            .next()
+                            .and_then(|s| s.parse::<u32>().ok())
+                            .unwrap_or(0);
+                        pid == 0 || !is_pid_alive(pid)
+                    } else {
+                        // Non-PID-prefixed: always safe to clean
+                        true
+                    };
+                    if should_clean {
+                        let _ = std::fs::remove_dir_all(&path);
                     }
+                }
             }
         }
     });
@@ -167,14 +170,19 @@ fn clean_db() {
 
     // Create the guard immediately so cleanup happens even if warm-up panics.
     // The fresh directory will be removed by the guard's Drop if warm-up fails.
-    let guard = WorkspaceGuard { path: workspace.clone() };
+    let guard = WorkspaceGuard {
+        path: workspace.clone(),
+    };
 
     // Warm-up: run a trivial SQL statement to force system table bootstrapping.
     // This ensures the CLI initialises database/system/{databases,tables,...}.dat
     // so that subsequent save_catalog() calls can persist metadata.
     let warmup = run_cli_in(&workspace, "SELECT 1");
-    assert!(!warmup.contains("error"),
-        "System table warm-up failed:\n{}", warmup);
+    assert!(
+        !warmup.contains("error"),
+        "System table warm-up failed:\n{}",
+        warmup
+    );
 
     // Install as this thread's active workspace. Assigning None first drops
     // any previous guard for THIS thread (removing that older workspace);
@@ -846,10 +854,13 @@ fn set_operations() {
          INSERT INTO t VALUES (3, 'a');\n",
     );
 
-    let out = rook("USE set_db;\nSELECT val FROM t WHERE id < 3 UNION ALL SELECT val FROM t WHERE id > 1;\n");
+    let out = rook(
+        "USE set_db;\nSELECT val FROM t WHERE id < 3 UNION ALL SELECT val FROM t WHERE id > 1;\n",
+    );
     assert_rows(&out, 4);
 
-    let out = rook("USE set_db;\nSELECT val FROM t WHERE id < 3 UNION SELECT val FROM t WHERE id > 1;\n");
+    let out =
+        rook("USE set_db;\nSELECT val FROM t WHERE id < 3 UNION SELECT val FROM t WHERE id > 1;\n");
     assert_rows(&out, 2);
     assert_contains(&out, "a");
     assert_contains(&out, "b");
@@ -1309,7 +1320,8 @@ fn set_operations_all() {
     // INTERSECT ALL: values in both sides, with multiplicity
     // t.val: [10,20,10,30,10], t2.val: [10,20,40]
     // 10 appears 3x in t, 1x in t2 -> 1 match; 20 appears 1x in both -> 1 match
-    let out = rook("USE seta_db;\nSELECT val FROM t INTERSECT ALL SELECT val FROM t2 ORDER BY val;\n");
+    let out =
+        rook("USE seta_db;\nSELECT val FROM t INTERSECT ALL SELECT val FROM t2 ORDER BY val;\n");
     assert_rows(&out, 2);
     assert_contains(&out, "10");
     assert_contains(&out, "20");
@@ -1571,8 +1583,6 @@ fn information_schema_advanced() {
     assert_contains(&out, "table_name");
     assert_contains(&out, "table_type");
 }
-
-
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Multiple Indexes Per Table

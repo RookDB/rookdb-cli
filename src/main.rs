@@ -115,13 +115,17 @@ fn main() -> io::Result<()> {
         }
     })
     .init();
-    storage_manager::backend::executor::row_select::register_where_parser(rook_parser::parse_where_text);
+    storage_manager::backend::executor::row_select::register_where_parser(
+        rook_parser::parse_where_text,
+    );
     storage_manager::backend::cache::register_check_parser(rook_parser::parse_check_expr);
     storage_manager::backend::planner::plan_cache::register_sql_parser(rook_parser::parse_sql);
 
     let is_piped = !io::stdin().is_terminal();
     let echo_sql = std::env::args().any(|a| a == "--echo" || a == "-e")
-        || std::env::var("ROOKDB_ECHO").map(|v| v != "0").unwrap_or(false);
+        || std::env::var("ROOKDB_ECHO")
+            .map(|v| v != "0")
+            .unwrap_or(false);
     if !is_piped {
         println!("--------------------------------------");
         println!("Welcome to RookDB");
@@ -140,7 +144,11 @@ fn main() -> io::Result<()> {
                 Some(ref db) => format!("rookdb ({})> ", db),
                 None => "rookdb> ".to_string(),
             };
-            let prompt_display = if pending.is_empty() { prompt.as_str() } else { "... " };
+            let prompt_display = if pending.is_empty() {
+                prompt.as_str()
+            } else {
+                "... "
+            };
             print!("{}", prompt_display);
             io::stdout().flush()?;
         }
@@ -210,7 +218,10 @@ fn print_sql_banner(sql: &str) {
     let width = 78;
     let top_border = "═".repeat(width - 9);
     let bottom_border = "═".repeat(width);
-    println!("\n\x1b[1;36m╔══ \x1b[1;97;44m SQL ❯ \x1b[0;1;36m{}\x1b[0m", top_border);
+    println!(
+        "\n\x1b[1;36m╔══ \x1b[1;97;44m SQL ❯ \x1b[0;1;36m{}\x1b[0m",
+        top_border
+    );
     for line in trimmed.lines() {
         let l = line.trim();
         if !l.is_empty() {
@@ -237,23 +248,41 @@ fn execute(
     match parse_sql(sql) {
         Ok(plan) => match plan {
             QueryPlan::ShowDatabases => handlers::dql::handle_show_databases(catalog, current_db),
-            QueryPlan::DropDatabase(ref p) => handlers::ddl::handle_drop_database(catalog, current_db, p),
-            QueryPlan::CreateDatabase(ref p) => handlers::ddl::handle_create_database(catalog, current_db, p),
-            QueryPlan::UseDatabase(ref name) => handlers::ddl::handle_use_database(catalog, current_db, name),
+            QueryPlan::DropDatabase(ref p) => {
+                handlers::ddl::handle_drop_database(catalog, current_db, p)
+            }
+            QueryPlan::CreateDatabase(ref p) => {
+                handlers::ddl::handle_create_database(catalog, current_db, p)
+            }
+            QueryPlan::UseDatabase(ref name) => {
+                handlers::ddl::handle_use_database(catalog, current_db, name)
+            }
             QueryPlan::ShowTables => handlers::dql::handle_show_tables(catalog, current_db),
-            QueryPlan::CreateTable(ref p) => handlers::ddl::handle_create_table(catalog, current_db, p),
+            QueryPlan::CreateTable(ref p) => {
+                handlers::ddl::handle_create_table(catalog, current_db, p)
+            }
             QueryPlan::Insert(ref p) => handlers::dml::handle_insert(catalog, current_db, &plan, p),
             QueryPlan::Select(_) => handlers::dql::handle_select(catalog, current_db, &plan),
             QueryPlan::Update(ref p) => handlers::dml::handle_update(catalog, current_db, p),
             QueryPlan::DropTable(ref p) => handlers::ddl::handle_drop_table(catalog, current_db, p),
-            QueryPlan::AlterTable(ref p) => handlers::ddl::handle_alter_table(catalog, current_db, p),
-            QueryPlan::CreateView(ref p) => handlers::ddl::handle_create_view(catalog, current_db, p),
+            QueryPlan::AlterTable(ref p) => {
+                handlers::ddl::handle_alter_table(catalog, current_db, p)
+            }
+            QueryPlan::CreateView(ref p) => {
+                handlers::ddl::handle_create_view(catalog, current_db, p)
+            }
             QueryPlan::DropView(ref p) => handlers::ddl::handle_drop_view(catalog, current_db, p),
             QueryPlan::Truncate(ref p) => handlers::ddl::handle_truncate(catalog, current_db, p),
-            QueryPlan::SetOperation(_) => handlers::dql::handle_set_operation(catalog, current_db, &plan),
-            QueryPlan::CreateTableAsSelect(ref p) => handlers::ddl::handle_create_table_as_select(catalog, current_db, p),
+            QueryPlan::SetOperation(_) => {
+                handlers::dql::handle_set_operation(catalog, current_db, &plan)
+            }
+            QueryPlan::CreateTableAsSelect(ref p) => {
+                handlers::ddl::handle_create_table_as_select(catalog, current_db, p)
+            }
             QueryPlan::DropIndex(ref p) => handlers::ddl::handle_drop_index(catalog, current_db, p),
-            QueryPlan::CreateIndex(ref p) => handlers::ddl::handle_create_index(catalog, current_db, p),
+            QueryPlan::CreateIndex(ref p) => {
+                handlers::ddl::handle_create_index(catalog, current_db, p)
+            }
             QueryPlan::Delete(ref p) => handlers::dml::handle_delete(catalog, current_db, p),
             QueryPlan::Vacuum(ref p) => handlers::ddl::handle_vacuum(catalog, current_db, p),
             QueryPlan::Unknown(ref msg) => {

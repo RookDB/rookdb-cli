@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use storage_manager::catalog::{
-    create_database, create_table, init_catalog, load_catalog, Catalog, Column,
+    Catalog, Column, create_database, create_table, init_catalog, load_catalog,
 };
 use storage_manager::heap::HeapManager;
 use storage_manager::types::DataType;
@@ -51,11 +51,7 @@ fn result(name: &str, n: u64, ms: u128, extra: &str) {
 struct Ws(PathBuf);
 impl Ws {
     fn new(tag: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!(
-            "rook_bench_p{}_{}",
-            std::process::id(),
-            tag
-        ));
+        let dir = std::env::temp_dir().join(format!("rook_bench_p{}_{}", std::process::id(), tag));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("base")).expect("ws create");
         std::env::set_current_dir(&dir).expect("chdir");
@@ -97,10 +93,8 @@ fn make_db_with_staff(db: &str, with_index: bool) -> Catalog {
     let _ = storage_manager::catalog::save_catalog(&c);
     if with_index {
         let c = load_catalog();
-        storage_manager::executor::create_index(
-            &c, db, "staff", "idx_id", &["id".to_string()],
-        )
-        .expect("create index");
+        storage_manager::executor::create_index(&c, db, "staff", "idx_id", &["id".to_string()])
+            .expect("create index");
     }
     load_catalog()
 }
@@ -205,7 +199,11 @@ fn bench_engine(n: u64, tag: &str, with_index: bool) {
         }
     }
     result(
-        if with_index { "typed_insert_indexed" } else { "typed_insert_plain" },
+        if with_index {
+            "typed_insert_indexed"
+        } else {
+            "typed_insert_plain"
+        },
         n,
         t.elapsed().as_millis(),
         "",
@@ -224,7 +222,12 @@ fn bench_engine(n: u64, tag: &str, with_index: bool) {
     // DISTINCT count through planner + Volcano aggregate (exercises typed HashSet<DataValue>)
     let t = Instant::now();
     match count_via_sql(&catalog, db, "SELECT COUNT(DISTINCT salary) FROM staff") {
-        Ok(c) => result("volcano_count_distinct", n, t.elapsed().as_millis(), &format!("distinct={}", c)),
+        Ok(c) => result(
+            "volcano_count_distinct",
+            n,
+            t.elapsed().as_millis(),
+            &format!("distinct={}", c),
+        ),
         Err(e) => eprintln!("[ERROR] count distinct: {}", e),
     }
 
@@ -241,7 +244,12 @@ fn bench_engine(n: u64, tag: &str, with_index: bool) {
                 return;
             }
         }
-        result("sql_point_select", samples, t.elapsed().as_millis(), "queries");
+        result(
+            "sql_point_select",
+            samples,
+            t.elapsed().as_millis(),
+            "queries",
+        );
     }
 }
 
@@ -255,22 +263,23 @@ fn count_via_sql(catalog: &Catalog, db: &str, sql: &str) -> Result<u64, String> 
         p
     } else {
         let plan = rook_parser::parse_sql(sql)?;
-        let logical = storage_manager::planner::plan_query(&plan, catalog, db)
-            .map_err(|e| e.to_string())?;
+        let logical =
+            storage_manager::planner::plan_query(&plan, catalog, db).map_err(|e| e.to_string())?;
         if params.is_empty() {
             storage_manager::backend::planner::plan_cache::store_cached_plan(
                 db,
                 &norm,
-                storage_manager::backend::planner::plan_cache::PlanCacheEntry::Plan(logical.clone()),
+                storage_manager::backend::planner::plan_cache::PlanCacheEntry::Plan(
+                    logical.clone(),
+                ),
             );
         }
         logical
     };
-    let tuples =
-        storage_manager::backend::executor::physical::engine::execute_plan_collect(
-            &logical, catalog, db,
-        )
-        .map_err(|e| e.to_string())?;
+    let tuples = storage_manager::backend::executor::physical::engine::execute_plan_collect(
+        &logical, catalog, db,
+    )
+    .map_err(|e| e.to_string())?;
     Ok(match tuples.first().and_then(|t| t.values.first()) {
         Some(Some(DataValue::Int(v))) => *v as u64,
         Some(Some(DataValue::BigInt(v))) => *v as u64,
@@ -304,7 +313,9 @@ fn bench_pipeline(n: u64, tag: &str) {
 }
 
 fn route_insert(catalog: &Catalog, db: &str, sql: &str) -> Result<usize, String> {
-    if let Some(count) = storage_manager::backend::planner::plan_cache::execute_cached_insert(catalog, db, sql)? {
+    if let Some(count) =
+        storage_manager::backend::planner::plan_cache::execute_cached_insert(catalog, db, sql)?
+    {
         return Ok(count);
     }
     use rook_ast::QueryPlan;
@@ -347,7 +358,11 @@ fn bench_join(m: u64, tag: &str) {
     // populate staff (m rows) and orders (2 rows per staff member)
     let t = Instant::now();
     for i in 0..m {
-        let vals = [i.to_string(), format!("user_{:06}", (i % 1_000_000) as usize), (i % 100_000).to_string()];
+        let vals = [
+            i.to_string(),
+            format!("user_{:06}", (i % 1_000_000) as usize),
+            (i % 100_000).to_string(),
+        ];
         let refs: Vec<&str> = vals.iter().map(|s| s.as_str()).collect();
         if !storage_manager::insert_single_tuple(&catalog, db, "staff", &refs).unwrap_or(false) {
             eprintln!("[ERROR] staff insert {} rejected", i);
@@ -357,9 +372,7 @@ fn bench_join(m: u64, tag: &str) {
     for i in 0..(m * 2) {
         let vals = [i.to_string(), (i % m).to_string(), (i % 500).to_string()];
         let refs: Vec<&str> = vals.iter().map(|s| s.as_str()).collect();
-        if !storage_manager::insert_single_tuple(&catalog, db, "orders", &refs)
-            .unwrap_or(false)
-        {
+        if !storage_manager::insert_single_tuple(&catalog, db, "orders", &refs).unwrap_or(false) {
             eprintln!("[ERROR] orders insert {} rejected", i);
             return;
         }
@@ -374,7 +387,10 @@ fn bench_join(m: u64, tag: &str) {
     match count_via_sql(&catalog, db, sql) {
         Ok(c) => println!(
             "[RESULT] phase=hash_join_count matched={} elapsed_ms={} side_a={} side_b={}",
-            c, tj.elapsed().as_millis(), m, m * 2
+            c,
+            tj.elapsed().as_millis(),
+            m,
+            m * 2
         ),
         Err(e) => eprintln!("[ERROR] hash join: {}", e),
     }
@@ -390,9 +406,7 @@ fn bench_mutate(n: u64, tag: &str) {
     for i in 0..n {
         let vals = staff_row(i);
         let refs: Vec<&str> = vals.iter().map(|s| s.as_str()).collect();
-        if !storage_manager::insert_single_tuple(&catalog, db, "staff", &refs)
-            .unwrap_or(false)
-        {
+        if !storage_manager::insert_single_tuple(&catalog, db, "staff", &refs).unwrap_or(false) {
             eprintln!("[ERROR] setup insert {} rejected", i);
             return;
         }
@@ -415,28 +429,42 @@ fn bench_mutate(n: u64, tag: &str) {
     eprintln!("  [mutate] selecting pointers...");
     let t = Instant::now();
     let ptrs = select_matching_pointers(&catalog, db, "staff", sel).expect("upd select");
-    eprintln!("  [mutate] {} pointers in {} ms", ptrs.len(), t.elapsed().as_millis());
+    eprintln!(
+        "  [mutate] {} pointers in {} ms",
+        ptrs.len(),
+        t.elapsed().as_millis()
+    );
     let assignments = parse_set_clause("salary = salary + 1").expect("set clause");
     let tu = Instant::now();
-    let upd = update_by_pointers(
-        &catalog,
-        db,
-        "staff",
-        &ptrs,
-        &assignments,
-    )
-    .expect("range update");
-    result("update_range_pointers", upd.updated_count as u64, t.elapsed().as_millis(), "");
-    eprintln!("  [mutate] update took {} ms total", tu.elapsed().as_millis());
+    let upd = update_by_pointers(&catalog, db, "staff", &ptrs, &assignments).expect("range update");
+    result(
+        "update_range_pointers",
+        upd.updated_count as u64,
+        t.elapsed().as_millis(),
+        "",
+    );
+    eprintln!(
+        "  [mutate] update took {} ms total",
+        tu.elapsed().as_millis()
+    );
 
     // range DELETE of the same span, then VACUUM
     eprintln!("  [mutate] starting delete selection...");
     let sel = parse_where_text(&format!("id >= 0 AND id < {}", n / 2)).unwrap();
     let t = Instant::now();
     let ptrs = select_matching_pointers(&catalog, db, "staff", sel).expect("del select");
-    eprintln!("  [mutate] delete pointers: {} in {} ms", ptrs.len(), t.elapsed().as_millis());
+    eprintln!(
+        "  [mutate] delete pointers: {} in {} ms",
+        ptrs.len(),
+        t.elapsed().as_millis()
+    );
     let del = delete_by_pointers(&catalog, db, "staff", &ptrs).expect("range delete");
-    result("delete_range_pointers", del.deleted_count as u64, t.elapsed().as_millis(), "");
+    result(
+        "delete_range_pointers",
+        del.deleted_count as u64,
+        t.elapsed().as_millis(),
+        "",
+    );
 
     let catalog = load_catalog();
     let t = Instant::now();
@@ -456,7 +484,9 @@ fn bench_mutate(n: u64, tag: &str) {
 // ── main dispatch ────────────────────────────────────────────────────────────
 fn main() {
     let _ = env_logger::try_init();
-    storage_manager::backend::executor::row_select::register_where_parser(rook_parser::parse_where_text);
+    storage_manager::backend::executor::row_select::register_where_parser(
+        rook_parser::parse_where_text,
+    );
     storage_manager::backend::cache::register_check_parser(rook_parser::parse_check_expr);
     storage_manager::backend::planner::plan_cache::register_sql_parser(rook_parser::parse_sql);
 

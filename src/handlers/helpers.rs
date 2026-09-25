@@ -19,7 +19,12 @@ pub fn save_table_constraint(db: &str, table: &str, definition: &str) {
         if let Some(end) = rest.rfind(')') {
             let cols = rest[..end].to_string();
             let _ = storage_manager::backend::system_table::insert_constraint_metadata(
-                db, table, "PRIMARY KEY", &cols, None, None,
+                db,
+                table,
+                "PRIMARY KEY",
+                &cols,
+                None,
+                None,
             );
         }
     }
@@ -70,7 +75,9 @@ pub fn save_table_constraint(db: &str, table: &str, definition: &str) {
                             } else if after.starts_with("SET NULL") {
                                 delete_action = " ON DELETE SET NULL";
                             }
-                            let skip_to = after.find(|c: char| c.is_whitespace()).unwrap_or(after.len());
+                            let skip_to = after
+                                .find(|c: char| c.is_whitespace())
+                                .unwrap_or(after.len());
                             rem = after[skip_to..].trim().to_string();
                         }
                         if let Some(after) = rem.strip_prefix("ON UPDATE ") {
@@ -82,15 +89,27 @@ pub fn save_table_constraint(db: &str, table: &str, definition: &str) {
                         }
                         let constr_type = format!("FOREIGN KEY{}{}", delete_action, update_action);
                         let _ = storage_manager::backend::system_table::insert_constraint_metadata(
-                            db, table, &constr_type, &cols,
-                            Some(&ref_table_name), Some(&ref_cols),
+                            db,
+                            table,
+                            &constr_type,
+                            &cols,
+                            Some(&ref_table_name),
+                            Some(&ref_cols),
                         );
                     }
                 } else {
-                    let ref_table_name = ref_rest.split_whitespace().next().unwrap_or(ref_rest).to_string();
+                    let ref_table_name = ref_rest
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or(ref_rest)
+                        .to_string();
                     let _ = storage_manager::backend::system_table::insert_constraint_metadata(
-                        db, table, "FOREIGN KEY", &cols,
-                        Some(&ref_table_name), Some(""),
+                        db,
+                        table,
+                        "FOREIGN KEY",
+                        &cols,
+                        Some(&ref_table_name),
+                        Some(""),
                     );
                 }
             }
@@ -143,17 +162,26 @@ pub fn value_expr_to_string(expr: &ExprNode) -> String {
     match expr {
         ExprNode::Constant(cv) => convert::constant_to_raw_string(cv),
         // Handle negative literals: the parser converts -5 to 0 - 5 (Binary with Sub)
-        ExprNode::Binary { left, op: ArithOp::Sub, right }
-            if matches!(**left, ExprNode::Constant(ConstantValue::Int(0))) =>
-        {
+        ExprNode::Binary {
+            left,
+            op: ArithOp::Sub,
+            right,
+        } if matches!(**left, ExprNode::Constant(ConstantValue::Int(0))) => {
             format!("-{}", value_expr_to_string(right))
         }
-        ExprNode::Case { when_then_pairs, else_result } => {
+        ExprNode::Case {
+            when_then_pairs,
+            else_result,
+        } => {
             // Render CASE back to SQL text
             let parts: Vec<String> = when_then_pairs
                 .iter()
                 .map(|(cond, res)| {
-                    format!("WHEN {} THEN {}", value_expr_to_string(cond), value_expr_to_string(res))
+                    format!(
+                        "WHEN {} THEN {}",
+                        value_expr_to_string(cond),
+                        value_expr_to_string(res)
+                    )
                 })
                 .collect();
             let else_part = else_result
@@ -189,11 +217,9 @@ pub fn expr_to_debug_string(expr: &ExprNode) -> String {
                 expr_to_debug_string(right)
             )
         }
-        ExprNode::Cast { expr, data_type } => format!(
-            "CAST({} AS {})",
-            expr_to_debug_string(expr),
-            data_type
-        ),
+        ExprNode::Cast { expr, data_type } => {
+            format!("CAST({} AS {})", expr_to_debug_string(expr), data_type)
+        }
         ExprNode::Compare { left, op, right } => {
             let op_str = match op {
                 ComparisonOp::Eq => "=",

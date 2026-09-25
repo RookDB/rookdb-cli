@@ -105,21 +105,24 @@ fn ensure_suite_init() {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if let Some(name) = path.file_name().and_then(|n| n.to_str())
-                    && name.starts_with("database_test_") {
-                        let should_clean = if let Some(pid_str) = name.strip_prefix("database_test_p") {
-                            // PID-prefixed: extract the PID (everything before the second '_')
-                            let pid = pid_str.split('_').next()
-                                .and_then(|s| s.parse::<u32>().ok())
-                                .unwrap_or(0);
-                            pid == 0 || !is_pid_alive(pid)
-                        } else {
-                            // Non-PID-prefixed: always safe to clean
-                            true
-                        };
-                        if should_clean {
-                            let _ = std::fs::remove_dir_all(&path);
-                        }
+                    && name.starts_with("database_test_")
+                {
+                    let should_clean = if let Some(pid_str) = name.strip_prefix("database_test_p") {
+                        // PID-prefixed: extract the PID (everything before the second '_')
+                        let pid = pid_str
+                            .split('_')
+                            .next()
+                            .and_then(|s| s.parse::<u32>().ok())
+                            .unwrap_or(0);
+                        pid == 0 || !is_pid_alive(pid)
+                    } else {
+                        // Non-PID-prefixed: always safe to clean
+                        true
+                    };
+                    if should_clean {
+                        let _ = std::fs::remove_dir_all(&path);
                     }
+                }
             }
         }
     });
@@ -154,12 +157,17 @@ fn clean_db() {
 
     // Create the guard immediately so cleanup happens even if warm-up panics.
     // The fresh directory will be removed by the guard's Drop if warm-up fails.
-    let guard = WorkspaceGuard { path: workspace.clone() };
+    let guard = WorkspaceGuard {
+        path: workspace.clone(),
+    };
 
     // Warm-up: bootstrap system tables with a trivial query
     let warmup = run_cli_in(&workspace, "SELECT 1");
-    assert!(!warmup.contains("error"),
-        "System table warm-up failed:\n{}", warmup);
+    assert!(
+        !warmup.contains("error"),
+        "System table warm-up failed:\n{}",
+        warmup
+    );
 
     // Install as this thread's active workspace. Assigning None first drops
     // any previous guard for THIS thread (removing that older workspace);
@@ -193,7 +201,7 @@ fn rook_err(sql: &str) -> String {
             .path
             .clone()
     });
-    
+
     let mut child = Command::new(rookdb_bin())
         .current_dir(&workspace_path)
         .stdin(Stdio::piped())
@@ -214,7 +222,10 @@ fn rook_err(sql: &str) -> String {
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        panic!("Expected CLI to exit with an error, but it succeeded.\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+        panic!(
+            "Expected CLI to exit with an error, but it succeeded.\nstdout:\n{}\nstderr:\n{}",
+            stdout, stderr
+        );
     }
     String::from_utf8_lossy(&output.stderr).to_string()
 }
@@ -390,7 +401,11 @@ fn bug03_unique_without_index() {
     assert_insert_failed(&out);
     // Check that 3 successful inserts happened
     let insert_count = out.matches("row inserted").count();
-    assert_eq!(insert_count, 3, "Expected exactly 3 successful inserts, got {}", insert_count);
+    assert_eq!(
+        insert_count, 3,
+        "Expected exactly 3 successful inserts, got {}",
+        insert_count
+    );
 }
 
 #[test]
@@ -670,7 +685,10 @@ fn test_new_compliance_features() {
     );
     assert_contains(&out_cascade, "Dropped table 't1'");
     assert_contains(&out_cascade, "Cascaded drop of view 'v1'");
-    assert_contains(&out_cascade, "Cascaded drop of 1 referencing foreign key constraints");
+    assert_contains(
+        &out_cascade,
+        "Cascaded drop of 1 referencing foreign key constraints",
+    );
 
     // 4. WHERE filtering on INFORMATION_SCHEMA views
     //     a) Qualified column references (table_name with information_schema.tables prefix)

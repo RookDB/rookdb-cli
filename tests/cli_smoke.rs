@@ -12,7 +12,7 @@
 
 mod common;
 
-use common::{expect_rows, run, Workspace};
+use common::{Workspace, expect_rows, run};
 
 /// items(id, name, price) with three rows.
 const SETUP: &[&str] = &[
@@ -69,7 +69,10 @@ fn crud_full_state_tracking() {
 
     // UPDATE must touch ONLY the matched row — the other two rows are part
     // of the expectation and would fail if anything else changed.
-    exec_use(&ws, "UPDATE items SET name = 'hex nut', price = 0.30 WHERE id = 2;");
+    exec_use(
+        &ws,
+        "UPDATE items SET name = 'hex nut', price = 0.30 WHERE id = 2;",
+    );
     expect_rows(
         &ws,
         &["USE shop;"],
@@ -86,10 +89,7 @@ fn crud_full_state_tracking() {
         &ws,
         &["USE shop;"],
         "SELECT * FROM items;",
-        &[
-            &["2", "'hex nut'", "0.3"],
-            &["3", "'washer'", "1.5"],
-        ],
+        &[&["2", "'hex nut'", "0.3"], &["3", "'washer'", "1.5"]],
     );
 
     // Deleting a row that no longer changes nothing.
@@ -98,10 +98,7 @@ fn crud_full_state_tracking() {
         &ws,
         &["USE shop;"],
         "SELECT * FROM items;",
-        &[
-            &["2", "'hex nut'", "0.3"],
-            &["3", "'washer'", "1.5"],
-        ],
+        &[&["2", "'hex nut'", "0.3"], &["3", "'washer'", "1.5"]],
     );
 }
 
@@ -116,10 +113,7 @@ fn projection_where_order_values() {
         &ws,
         &["USE shop;"],
         "SELECT name FROM items WHERE price >= 0.25 ORDER BY price;",
-        &[
-            &["'bolt'"],
-            &["'washer'"],
-        ],
+        &[&["'bolt'"], &["'washer'"]],
     );
 
     // Equality predicate on a string column.
@@ -127,9 +121,7 @@ fn projection_where_order_values() {
         &ws,
         &["USE shop;"],
         "SELECT id, name FROM items WHERE name = 'washer';",
-        &[
-            &["3", "'washer'"],
-        ],
+        &[&["3", "'washer'"]],
     );
 
     // BETWEEN bounds are inclusive.
@@ -137,10 +129,7 @@ fn projection_where_order_values() {
         &ws,
         &["USE shop;"],
         "SELECT id FROM items WHERE price BETWEEN 0.10 AND 0.30 ORDER BY price;",
-        &[
-            &["2"],
-            &["1"],
-        ],
+        &[&["2"], &["1"]],
     );
 
     // Arithmetic projection evaluates per row.
@@ -148,9 +137,7 @@ fn projection_where_order_values() {
         &ws,
         &["USE shop;"],
         "SELECT id, price * 2 FROM items WHERE id = 3;",
-        &[
-            &["3", "3"],
-        ],
+        &[&["3", "3"]],
     );
 }
 
@@ -182,13 +169,7 @@ fn order_limit_offset_windows_are_exact() {
         &ws,
         PRE,
         "SELECT name FROM emp ORDER BY salary DESC;",
-        &[
-            &["'Dee'"],
-            &["'Cy'"],
-            &["'Ben'"],
-            &["'Ann'"],
-            &["'Eli'"],
-        ],
+        &[&["'Dee'"], &["'Cy'"], &["'Ben'"], &["'Ann'"], &["'Eli'"]],
     );
 
     // LIMIT/OFFSET windows slice the ordered stream precisely.
@@ -196,10 +177,7 @@ fn order_limit_offset_windows_are_exact() {
         &ws,
         PRE,
         "SELECT id FROM emp ORDER BY salary DESC LIMIT 2 OFFSET 1;",
-        &[
-            &["3"],
-            &["2"],
-        ],
+        &[&["3"], &["2"]],
     );
 
     // OFFSET beyond the end yields an empty result.
@@ -231,11 +209,7 @@ fn ddl_lifecycle_values() {
         &ws,
         &["USE shop;"],
         "SELECT id, stock FROM items;",
-        &[
-            &["1", "NULL"],
-            &["2", "NULL"],
-            &["3", "NULL"],
-        ],
+        &[&["1", "NULL"], &["2", "NULL"], &["3", "NULL"]],
     );
 
     // Setting stock on one row leaves the other NULLs intact.
@@ -244,11 +218,7 @@ fn ddl_lifecycle_values() {
         &ws,
         &["USE shop;"],
         "SELECT id, stock FROM items;",
-        &[
-            &["1", "NULL"],
-            &["2", "42"],
-            &["3", "NULL"],
-        ],
+        &[&["1", "NULL"], &["2", "42"], &["3", "NULL"]],
     );
 
     // DROP removes the table entirely.
@@ -273,30 +243,25 @@ fn indexes_and_views_return_correct_values() {
         &ws,
         &["USE shop;"],
         "SELECT name, price FROM items WHERE price = 1.5;",
-        &[
-            &["'washer'", "1.5"],
-        ],
+        &[&["'washer'", "1.5"]],
     );
     expect_rows(
         &ws,
         &["USE shop;"],
         "SELECT name FROM items WHERE price <= 0.25 ORDER BY price;",
-        &[
-            &["'nut'"],
-            &["'bolt'"],
-        ],
+        &[&["'nut'"], &["'bolt'"]],
     );
 
     // A view stores its query and replays it with correct filtering.
-    exec_use(&ws, "CREATE VIEW pricey AS SELECT id, name FROM items WHERE price >= 0.25;");
+    exec_use(
+        &ws,
+        "CREATE VIEW pricey AS SELECT id, name FROM items WHERE price >= 0.25;",
+    );
     expect_rows(
         &ws,
         &["USE shop;"],
         "SELECT * FROM pricey;",
-        &[
-            &["1", "'bolt'"],
-            &["3", "'washer'"],
-        ],
+        &[&["1", "'bolt'"], &["3", "'washer'"]],
     );
 
     exec_use(&ws, "DROP VIEW pricey;");
@@ -356,8 +321,8 @@ fn session_survives_errors() {
         &ws,
         &[
             "USE shop;",
-            "SELECT * FROM missing_table;",   // runtime error
-            "SELEC bogus;",                   // parse error
+            "SELECT * FROM missing_table;", // runtime error
+            "SELEC bogus;",                 // parse error
             "SELECT id FROM items WHERE id = 1;",
         ],
     );

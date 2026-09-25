@@ -3,11 +3,13 @@ use std::path::Path;
 
 use storage_manager::catalog::{Catalog, create_table, init_catalog, load_catalog};
 use storage_manager::heap::HeapManager;
-use storage_manager::types::{deserialize_nullable_row, serialize_nullable_typed_row, DataValue};
 use storage_manager::insert_single_tuple;
+use storage_manager::types::{DataValue, deserialize_nullable_row, serialize_nullable_typed_row};
 
 pub fn initialize_catalog() -> Catalog {
-    storage_manager::backend::executor::row_select::register_where_parser(rook_parser::parse_where_text);
+    storage_manager::backend::executor::row_select::register_where_parser(
+        rook_parser::parse_where_text,
+    );
     storage_manager::backend::cache::register_check_parser(rook_parser::parse_check_expr);
     init_catalog();
     load_catalog()
@@ -32,14 +34,16 @@ fn select_plan_references_table(plan: &rook_ast::SelectPlan, table: &str) -> boo
             return true;
         }
         if let Some(rt) = &cte.recursive_term
-            && select_plan_references_table(rt, table) {
-                return true;
-            }
+            && select_plan_references_table(rt, table)
+        {
+            return true;
+        }
     }
     // Check projections (ScalarSubquery)
     for proj in &plan.projections {
         match proj {
-            rook_ast::SelectExpr::UnnamedExpr(expr) | rook_ast::SelectExpr::ExprWithAlias { expr, .. } => {
+            rook_ast::SelectExpr::UnnamedExpr(expr)
+            | rook_ast::SelectExpr::ExprWithAlias { expr, .. } => {
                 if expr_references_table(expr, table) {
                     return true;
                 }
@@ -49,14 +53,16 @@ fn select_plan_references_table(plan: &rook_ast::SelectPlan, table: &str) -> boo
     }
     // Check selection (WHERE)
     if let Some(sel) = &plan.selection
-        && predicate_node_references_table(sel, table) {
-            return true;
-        }
+        && predicate_node_references_table(sel, table)
+    {
+        return true;
+    }
     // Check HAVING
     if let Some(hav) = &plan.having
-        && predicate_node_references_table(hav, table) {
-            return true;
-        }
+        && predicate_node_references_table(hav, table)
+    {
+        return true;
+    }
     false
 }
 
@@ -77,24 +83,29 @@ fn expr_references_table(expr: &rook_ast::ExprNode, table: &str) -> bool {
             expr_references_table(left, table) || expr_references_table(right, table)
         }
         rook_ast::ExprNode::Cast { expr: inner, .. } => expr_references_table(inner, table),
-        rook_ast::ExprNode::Case { when_then_pairs, else_result } => {
+        rook_ast::ExprNode::Case {
+            when_then_pairs,
+            else_result,
+        } => {
             for (w, t_expr) in when_then_pairs {
                 if expr_references_table(w, table) || expr_references_table(t_expr, table) {
                     return true;
                 }
             }
             if let Some(el) = else_result
-                && expr_references_table(el, table) {
-                    return true;
-                }
+                && expr_references_table(el, table)
+            {
+                return true;
+            }
             false
         }
         rook_ast::ExprNode::Function { args, .. } => {
             for arg in args {
                 if let rook_ast::FunctionArg::Expr(inner) = arg
-                    && expr_references_table(inner, table) {
-                        return true;
-                    }
+                    && expr_references_table(inner, table)
+                {
+                    return true;
+                }
             }
             false
         }
@@ -108,7 +119,8 @@ fn expr_references_table(expr: &rook_ast::ExprNode, table: &str) -> bool {
 fn predicate_node_references_table(pred: &rook_ast::PredicateNode, table: &str) -> bool {
     match pred {
         rook_ast::PredicateNode::BinaryOp { left, right, .. } => {
-            predicate_node_references_table(left, table) || predicate_node_references_table(right, table)
+            predicate_node_references_table(left, table)
+                || predicate_node_references_table(right, table)
         }
         rook_ast::PredicateNode::Not(inner) => predicate_node_references_table(inner, table),
         rook_ast::PredicateNode::Compare { left, right, .. } => {
@@ -118,7 +130,9 @@ fn predicate_node_references_table(pred: &rook_ast::PredicateNode, table: &str) 
             expr_references_table(expr, table)
         }
         rook_ast::PredicateNode::Between { expr, low, high } => {
-            expr_references_table(expr, table) || expr_references_table(low, table) || expr_references_table(high, table)
+            expr_references_table(expr, table)
+                || expr_references_table(low, table)
+                || expr_references_table(high, table)
         }
         rook_ast::PredicateNode::InList { expr, list } => {
             if expr_references_table(expr, table) {
@@ -134,7 +148,8 @@ fn predicate_node_references_table(pred: &rook_ast::PredicateNode, table: &str) 
         rook_ast::PredicateNode::Like { expr, .. } => expr_references_table(expr, table),
         rook_ast::PredicateNode::Exists(info) => select_plan_references_table(&info.select, table),
         rook_ast::PredicateNode::InSubquery { expr, subquery, .. } => {
-            expr_references_table(expr, table) || select_plan_references_table(&subquery.select, table)
+            expr_references_table(expr, table)
+                || select_plan_references_table(&subquery.select, table)
         }
         rook_ast::PredicateNode::IsDistinctFrom { left, right } => {
             expr_references_table(left, table) || expr_references_table(right, table)
@@ -167,7 +182,10 @@ pub fn execute_drop_table(
 
     if !table_exists {
         if if_exists {
-            println!("Table '{}' does not exist (IF EXISTS specified, skipping).", table);
+            println!(
+                "Table '{}' does not exist (IF EXISTS specified, skipping).",
+                table
+            );
             return Ok(());
         }
         return Err(io::Error::new(
@@ -180,25 +198,36 @@ pub fn execute_drop_table(
     let mut ref_views = Vec::new();
     if let Some(db_obj) = catalog.databases.get(db) {
         for (view_name, view_def) in &db_obj.views {
-            if let Ok(select_plan) = serde_json::from_str::<rook_ast::SelectPlan>(&view_def.query_json)
-                && select_plan_references_table(&select_plan, table) {
-                    ref_views.push(view_name.clone());
-                }
+            if let Ok(select_plan) =
+                serde_json::from_str::<rook_ast::SelectPlan>(&view_def.query_json)
+                && select_plan_references_table(&select_plan, table)
+            {
+                ref_views.push(view_name.clone());
+            }
         }
     }
 
     if !ref_views.is_empty() && !cascade {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            format!("Cannot drop table '{}' because it is referenced by views: {}", table, ref_views.join(", ")),
+            format!(
+                "Cannot drop table '{}' because it is referenced by views: {}",
+                table,
+                ref_views.join(", ")
+            ),
         ));
     }
 
     // Check referencing foreign keys (RESTRICT check)
-    let ref_fks = match storage_manager::backend::constraint::loaders::load_referencing_foreign_keys(db, table) {
+    let ref_fks = match storage_manager::backend::constraint::loaders::load_referencing_foreign_keys(
+        db, table,
+    ) {
         Ok(fks) => fks,
         Err(e) => {
-            return Err(io::Error::other(format!("Failed to check referencing foreign keys: {}", e)));
+            return Err(io::Error::other(format!(
+                "Failed to check referencing foreign keys: {}",
+                e
+            )));
         }
     };
 
@@ -206,23 +235,33 @@ pub fn execute_drop_table(
         let child_tbls: Vec<String> = ref_fks.iter().map(|fk| fk.0.clone()).collect();
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            format!("Cannot drop table '{}' because it is referenced by foreign keys in: {}", table, child_tbls.join(", ")),
+            format!(
+                "Cannot drop table '{}' because it is referenced by foreign keys in: {}",
+                table,
+                child_tbls.join(", ")
+            ),
         ));
     }
 
     // If cascade is true, automatically drop referencing views
-    if cascade && !ref_views.is_empty()
-        && let Some(db_obj) = catalog.databases.get_mut(db) {
-            for view_name in &ref_views {
-                db_obj.views.remove(view_name);
-                println!("Cascaded drop of view '{}'.", view_name);
-            }
+    if cascade
+        && !ref_views.is_empty()
+        && let Some(db_obj) = catalog.databases.get_mut(db)
+    {
+        for view_name in &ref_views {
+            db_obj.views.remove(view_name);
+            println!("Cascaded drop of view '{}'.", view_name);
         }
+    }
 
     // If cascade is true, automatically delete referencing foreign key constraints
     if cascade && !ref_fks.is_empty() {
-        let count = storage_manager::backend::system_table::delete_referencing_foreign_keys(db, table)?;
-        println!("Cascaded drop of {} referencing foreign key constraints.", count);
+        let count =
+            storage_manager::backend::system_table::delete_referencing_foreign_keys(db, table)?;
+        println!(
+            "Cascaded drop of {} referencing foreign key constraints.",
+            count
+        );
     }
 
     // Remove the table from the catalog
@@ -331,18 +370,29 @@ pub fn execute_alter_table(
             let col = storage_manager::catalog::Column::new(
                 column_def.name.clone(),
                 column_def.data_type.parse().map_err(|e: String| {
-                    io::Error::new(io::ErrorKind::InvalidInput, format!("Invalid data type: {}", e))
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("Invalid data type: {}", e),
+                    )
                 })?,
             );
             // Check for duplicate column name
-            if updated_table.columns.iter().any(|c| c.name.eq_ignore_ascii_case(&column_def.name)) {
+            if updated_table
+                .columns
+                .iter()
+                .any(|c| c.name.eq_ignore_ascii_case(&column_def.name))
+            {
                 return Err(io::Error::new(
                     io::ErrorKind::AlreadyExists,
-                    format!("Column '{}' already exists in table '{}'", column_def.name, alter.table),
+                    format!(
+                        "Column '{}' already exists in table '{}'",
+                        column_def.name, alter.table
+                    ),
                 ));
             }
             // Capture old schema BEFORE pushing the new column (needed for backfill)
-            let old_schema: Vec<storage_manager::types::DataType> = updated_table.columns
+            let old_schema: Vec<storage_manager::types::DataType> = updated_table
+                .columns
                 .iter()
                 .map(|c| c.data_type.clone())
                 .collect();
@@ -354,29 +404,40 @@ pub fn execute_alter_table(
             // (e.g. CREATE INDEX) that would fail on schema-mismatched rows.
             let dat_path = format!("database/base/{}/{}.dat", db, alter.table);
             if Path::new(&dat_path).exists() {
-                let new_schema: Vec<storage_manager::types::DataType> = updated_table.columns
+                let new_schema: Vec<storage_manager::types::DataType> = updated_table
+                    .columns
                     .iter()
                     .map(|c| c.data_type.clone())
                     .collect();
 
                 // Open the old heap and scan all rows
-                let old_heap = HeapManager::open(std::path::PathBuf::from(&dat_path))
-                    .map_err(|e| io::Error::other(format!("Failed to open heap for backfill: {}", e)))?;
+                let old_heap =
+                    HeapManager::open(std::path::PathBuf::from(&dat_path)).map_err(|e| {
+                        io::Error::other(format!("Failed to open heap for backfill: {}", e))
+                    })?;
 
                 let mut migrated_rows: Vec<Vec<u8>> = Vec::new();
                 for result in old_heap.scan() {
                     let (_page_id, _slot_id, row_bytes) = result?;
                     // Deserialize with OLD schema (before ADD COLUMN)
-                    let old_values = deserialize_nullable_row(&old_schema, &row_bytes)
-                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData,
-                            format!("Failed to deserialize row during backfill: {}", e)))?;
+                    let old_values =
+                        deserialize_nullable_row(&old_schema, &row_bytes).map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!("Failed to deserialize row during backfill: {}", e),
+                            )
+                        })?;
                     // Append NULL for the new column
                     let mut new_values: Vec<Option<DataValue>> = old_values;
                     new_values.push(None);
                     // Re-serialize with NEW schema (includes the added column)
                     let new_row_bytes = serialize_nullable_typed_row(&new_schema, &new_values)
-                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData,
-                            format!("Failed to serialize row during backfill: {}", e)))?;
+                        .map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!("Failed to serialize row during backfill: {}", e),
+                            )
+                        })?;
                     migrated_rows.push(new_row_bytes);
                 }
                 // Drop the old heap (closes file handles)
@@ -390,7 +451,12 @@ pub fn execute_alter_table(
                 // Create a fresh heap at the temp path
                 {
                     let mut tmp_heap = HeapManager::create(std::path::PathBuf::from(&tmp_path))
-                        .map_err(|e| io::Error::other(format!("Failed to create temp heap for backfill: {}", e)))?;
+                        .map_err(|e| {
+                            io::Error::other(format!(
+                                "Failed to create temp heap for backfill: {}",
+                                e
+                            ))
+                        })?;
                     for row in &migrated_rows {
                         tmp_heap.insert_tuple(row)?;
                     }
@@ -399,17 +465,22 @@ pub fn execute_alter_table(
 
                 // Atomic swap: remove old files, rename temp files into place
                 let fsm_path = format!("{}.fsm", dat_path);
-                std::fs::remove_file(&dat_path)
-                    .map_err(|e| io::Error::other(format!("Failed to remove old heap during backfill: {}", e)))?;
+                std::fs::remove_file(&dat_path).map_err(|e| {
+                    io::Error::other(format!("Failed to remove old heap during backfill: {}", e))
+                })?;
                 let _ = std::fs::remove_file(&fsm_path);
 
-                std::fs::rename(&tmp_path, &dat_path)
-                    .map_err(|e| io::Error::other(format!("Failed to rename backfill heap: {}", e)))?;
+                std::fs::rename(&tmp_path, &dat_path).map_err(|e| {
+                    io::Error::other(format!("Failed to rename backfill heap: {}", e))
+                })?;
                 let _ = std::fs::rename(&tmp_fsm_path, &fsm_path);
 
                 // Evict cached heap manager and shared buffer pool for the swapped path
-                storage_manager::backend::buffer_manager::shared_pool::invalidate(std::path::Path::new(&dat_path));
-                let _ = storage_manager::backend::cache::evict_heap(std::path::Path::new(&dat_path));
+                storage_manager::backend::buffer_manager::shared_pool::invalidate(
+                    std::path::Path::new(&dat_path),
+                );
+                let _ =
+                    storage_manager::backend::cache::evict_heap(std::path::Path::new(&dat_path));
 
                 // Remove stale index files — they reference old heap page/slot locations
                 remove_index_files_for_table(db, &alter.table, None);
@@ -429,7 +500,8 @@ pub fn execute_alter_table(
 
             // Capture OLD schema BEFORE removing the column (needed to deserialize
             // existing rows from disk).
-            let old_schema: Vec<storage_manager::types::DataType> = updated_table.columns
+            let old_schema: Vec<storage_manager::types::DataType> = updated_table
+                .columns
                 .iter()
                 .map(|c| c.data_type.clone())
                 .collect();
@@ -441,28 +513,48 @@ pub fn execute_alter_table(
             // "Header column count N does not match schema length M".
             let dat_path = format!("database/base/{}/{}.dat", db, alter.table);
             if Path::new(&dat_path).exists() {
-                let new_schema: Vec<storage_manager::types::DataType> = updated_table.columns
+                let new_schema: Vec<storage_manager::types::DataType> = updated_table
+                    .columns
                     .iter()
                     .map(|c| c.data_type.clone())
                     .collect();
 
-                let old_heap = HeapManager::open(std::path::PathBuf::from(&dat_path))
-                    .map_err(|e| io::Error::other(format!("Failed to open heap for drop-column backfill: {}", e)))?;
+                let old_heap =
+                    HeapManager::open(std::path::PathBuf::from(&dat_path)).map_err(|e| {
+                        io::Error::other(format!(
+                            "Failed to open heap for drop-column backfill: {}",
+                            e
+                        ))
+                    })?;
 
                 let mut migrated_rows: Vec<Vec<u8>> = Vec::new();
                 for result in old_heap.scan() {
                     let (_page_id, _slot_id, row_bytes) = result?;
                     // Deserialize with OLD schema (includes the column being dropped)
-                    let old_values = deserialize_nullable_row(&old_schema, &row_bytes)
-                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData,
-                            format!("Failed to deserialize row during drop-column backfill: {}", e)))?;
+                    let old_values =
+                        deserialize_nullable_row(&old_schema, &row_bytes).map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!(
+                                    "Failed to deserialize row during drop-column backfill: {}",
+                                    e
+                                ),
+                            )
+                        })?;
                     // Remove the dropped column's value
                     let mut new_values: Vec<Option<DataValue>> = old_values;
                     new_values.remove(pos);
                     // Re-serialize with NEW schema (without the dropped column)
                     let new_row_bytes = serialize_nullable_typed_row(&new_schema, &new_values)
-                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData,
-                            format!("Failed to serialize row during drop-column backfill: {}", e)))?;
+                        .map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!(
+                                    "Failed to serialize row during drop-column backfill: {}",
+                                    e
+                                ),
+                            )
+                        })?;
                     migrated_rows.push(new_row_bytes);
                 }
                 drop(old_heap);
@@ -473,7 +565,12 @@ pub fn execute_alter_table(
 
                 {
                     let mut tmp_heap = HeapManager::create(std::path::PathBuf::from(&tmp_path))
-                        .map_err(|e| io::Error::other(format!("Failed to create temp heap for drop-column backfill: {}", e)))?;
+                        .map_err(|e| {
+                            io::Error::other(format!(
+                                "Failed to create temp heap for drop-column backfill: {}",
+                                e
+                            ))
+                        })?;
                     for row in &migrated_rows {
                         tmp_heap.insert_tuple(row)?;
                     }
@@ -482,17 +579,25 @@ pub fn execute_alter_table(
 
                 // Atomic swap
                 let fsm_path = format!("{}.fsm", dat_path);
-                std::fs::remove_file(&dat_path)
-                    .map_err(|e| io::Error::other(format!("Failed to remove old heap during drop-column backfill: {}", e)))?;
+                std::fs::remove_file(&dat_path).map_err(|e| {
+                    io::Error::other(format!(
+                        "Failed to remove old heap during drop-column backfill: {}",
+                        e
+                    ))
+                })?;
                 let _ = std::fs::remove_file(&fsm_path);
 
-                std::fs::rename(&tmp_path, &dat_path)
-                    .map_err(|e| io::Error::other(format!("Failed to rename backfill heap: {}", e)))?;
+                std::fs::rename(&tmp_path, &dat_path).map_err(|e| {
+                    io::Error::other(format!("Failed to rename backfill heap: {}", e))
+                })?;
                 let _ = std::fs::rename(&tmp_fsm_path, &fsm_path);
 
                 // Evict cached heap manager and shared buffer pool for the swapped path
-                storage_manager::backend::buffer_manager::shared_pool::invalidate(std::path::Path::new(&dat_path));
-                let _ = storage_manager::backend::cache::evict_heap(std::path::Path::new(&dat_path));
+                storage_manager::backend::buffer_manager::shared_pool::invalidate(
+                    std::path::Path::new(&dat_path),
+                );
+                let _ =
+                    storage_manager::backend::cache::evict_heap(std::path::Path::new(&dat_path));
 
                 // Remove stale index files
                 remove_index_files_for_table(db, &alter.table, None);
@@ -511,7 +616,10 @@ pub fn execute_alter_table(
                 })?;
             col.name = new_name.clone();
         }
-        AlterTableAction::SetDefault { column, default_expr } => {
+        AlterTableAction::SetDefault {
+            column,
+            default_expr,
+        } => {
             let col = updated_table
                 .columns
                 .iter_mut()
@@ -524,8 +632,10 @@ pub fn execute_alter_table(
                 })?;
             // Parse the default value string into a DataValue
             let default_dv = storage_manager::executor::create_index::parse_string_to_value(
-                &col.data_type, default_expr,
-            ).ok();
+                &col.data_type,
+                default_expr,
+            )
+            .ok();
             col.constraints.default = default_dv;
         }
         AlterTableAction::DropDefault { column } => {
@@ -558,8 +668,12 @@ pub fn execute_alter_table(
             // Uses an O(1) null-bitmap check per tuple (no full deserialisation).
             let dat_path = format!("database/base/{}/{}.dat", db, alter.table);
             if Path::new(&dat_path).exists() {
-                let heap = HeapManager::open(std::path::PathBuf::from(&dat_path))
-                    .map_err(|e| io::Error::other(format!("Failed to open heap for SET NOT NULL validation: {}", e)))?;
+                let heap = HeapManager::open(std::path::PathBuf::from(&dat_path)).map_err(|e| {
+                    io::Error::other(format!(
+                        "Failed to open heap for SET NOT NULL validation: {}",
+                        e
+                    ))
+                })?;
 
                 // Fast-path: if the file size is only the header page (8 KB),
                 // there are no data pages and thus no rows to validate.
@@ -572,12 +686,17 @@ pub fn execute_alter_table(
                     for result in heap.scan() {
                         let (_page_id, _slot_id, row_bytes) = result?;
                         // Lightweight null-bitmap check — avoids full deserialisation
-                        if storage_manager::types::null_bitmap::is_column_null_in_row(&row_bytes, col_idx)
-                            .unwrap_or(false)
+                        if storage_manager::types::null_bitmap::is_column_null_in_row(
+                            &row_bytes, col_idx,
+                        )
+                        .unwrap_or(false)
                         {
                             return Err(io::Error::new(
                                 io::ErrorKind::InvalidInput,
-                                format!("Table '{}' contains NULL values in column '{}'; cannot alter to NOT NULL", alter.table, column)
+                                format!(
+                                    "Table '{}' contains NULL values in column '{}'; cannot alter to NOT NULL",
+                                    alter.table, column
+                                ),
                             ));
                         }
                     }
@@ -609,7 +728,9 @@ pub fn execute_alter_table(
     match &alter.action {
         AlterTableAction::DropColumn { column } => {
             if let Err(e) = storage_manager::backend::system_table::delete_column_constraints(
-                db, &alter.table, column,
+                db,
+                &alter.table,
+                column,
             ) {
                 eprintln!(
                     "[AlterTable] Warning: failed to clean up constraint metadata for column '{}': {}",
@@ -619,7 +740,10 @@ pub fn execute_alter_table(
         }
         AlterTableAction::RenameColumn { old_name, new_name } => {
             if let Err(e) = storage_manager::backend::system_table::rename_column_in_constraints(
-                db, &alter.table, old_name, new_name,
+                db,
+                &alter.table,
+                old_name,
+                new_name,
             ) {
                 eprintln!(
                     "[AlterTable] Warning: failed to update constraint metadata for column rename '{}' → '{}': {}",
@@ -646,16 +770,14 @@ pub fn execute_alter_table(
 }
 
 /// Execute a TRUNCATE TABLE query — removes all data from a table.
-pub fn execute_truncate(
-    catalog: &Catalog,
-    db: &str,
-    table: &str,
-) -> io::Result<()> {
+pub fn execute_truncate(catalog: &Catalog, db: &str, table: &str) -> io::Result<()> {
     // Validate database and table exist
-    let db_obj = catalog
-        .databases
-        .get(db)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("Database '{}' not found", db)))?;
+    let db_obj = catalog.databases.get(db).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Database '{}' not found", db),
+        )
+    })?;
 
     if !db_obj.tables.contains_key(table) {
         return Err(io::Error::new(
@@ -670,9 +792,8 @@ pub fn execute_truncate(
     // Recreate the table file using HeapManager
     let path = std::path::Path::new(&dat_path);
     if path.exists() {
-        std::fs::remove_file(path).map_err(|e| {
-            io::Error::other(format!("Failed to remove table file: {}", e))
-        })?;
+        std::fs::remove_file(path)
+            .map_err(|e| io::Error::other(format!("Failed to remove table file: {}", e)))?;
     }
     // Remove FSM fork
     let fsm_path = format!("{}.fsm", dat_path);
@@ -681,7 +802,8 @@ pub fn execute_truncate(
     // Create fresh heap file
     let mut hm = storage_manager::heap::HeapManager::create(std::path::PathBuf::from(&dat_path))
         .map_err(|e| io::Error::other(format!("Failed to create table file: {}", e)))?;
-    hm.flush().map_err(|e| io::Error::other(format!("Failed to flush table file: {}", e)))?;
+    hm.flush()
+        .map_err(|e| io::Error::other(format!("Failed to flush table file: {}", e)))?;
 
     // Remove index files (they're stale after truncation)
     remove_index_files_for_table(db, table, None);
@@ -715,9 +837,7 @@ pub fn execute_create_view(
     let query_json = serde_json::to_string(&view.query)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-    let view_def = storage_manager::catalog::types::ViewDef {
-        query_json,
-    };
+    let view_def = storage_manager::catalog::types::ViewDef { query_json };
 
     if let Some(db_obj) = catalog.databases.get_mut(db) {
         if db_obj.tables.contains_key(&view.name) {
@@ -729,7 +849,10 @@ pub fn execute_create_view(
         if db_obj.views.contains_key(&view.name) && !view.or_replace {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
-                format!("View '{}' already exists (use OR REPLACE to modify)", view.name),
+                format!(
+                    "View '{}' already exists (use OR REPLACE to modify)",
+                    view.name
+                ),
             ));
         }
         db_obj.views.insert(view.name.clone(), view_def);
@@ -773,34 +896,52 @@ pub fn execute_create_table_as_select(
     let query_plan = rook_ast::QueryPlan::Select(*ctas.query.clone());
     let logical_plan = match storage_manager::planner::plan_query(&query_plan, catalog, db) {
         Ok(plan) => plan,
-        Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidInput,
-            format!("Failed to plan SELECT query: {}", e))),
+        Err(e) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Failed to plan SELECT query: {}", e),
+            ));
+        }
     };
 
-    let (tuples, output_schema) = match storage_manager::executor::physical::engine::execute_plan_collect_with_schema(
-        &logical_plan, catalog, db,
-    ) {
-        Ok(res) => res,
-        Err(e) => return Err(io::Error::other(format!("Failed to execute SELECT query: {}", e))),
-    };
+    let (tuples, output_schema) =
+        match storage_manager::executor::physical::engine::execute_plan_collect_with_schema(
+            &logical_plan,
+            catalog,
+            db,
+        ) {
+            Ok(res) => res,
+            Err(e) => {
+                return Err(io::Error::other(format!(
+                    "Failed to execute SELECT query: {}",
+                    e
+                )));
+            }
+        };
 
     if tuples.is_empty() {
         // No rows — infer column types from the plan's output schema
         let schema = logical_plan_schema(&logical_plan);
-        let columns: Vec<storage_manager::catalog::Column> = schema.into_iter().map(|(name, dt_str)| {
-            let dt = dt_str.parse::<storage_manager::types::DataType>()
-                .unwrap_or(storage_manager::types::DataType::Varchar(255));
-            storage_manager::catalog::Column {
-                name,
-                data_type: dt,
-                nullable: true,
-                constraints: storage_manager::catalog::types::Constraints::default(),
-            }
-        }).collect();
+        let columns: Vec<storage_manager::catalog::Column> = schema
+            .into_iter()
+            .map(|(name, dt_str)| {
+                let dt = dt_str
+                    .parse::<storage_manager::types::DataType>()
+                    .unwrap_or(storage_manager::types::DataType::Varchar(255));
+                storage_manager::catalog::Column {
+                    name,
+                    data_type: dt,
+                    nullable: true,
+                    constraints: storage_manager::catalog::types::Constraints::default(),
+                }
+            })
+            .collect();
 
         if columns.is_empty() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput,
-                "Cannot determine column types for CREATE TABLE AS SELECT".to_string()));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Cannot determine column types for CREATE TABLE AS SELECT".to_string(),
+            ));
         }
 
         // Create the table with inferred column types
@@ -810,14 +951,15 @@ pub fn execute_create_table_as_select(
     }
 
     // Infer column types from the query output schema
-    let columns: Vec<storage_manager::catalog::Column> = output_schema.iter().map(|ci| {
-        storage_manager::catalog::Column {
+    let columns: Vec<storage_manager::catalog::Column> = output_schema
+        .iter()
+        .map(|ci| storage_manager::catalog::Column {
             name: ci.name.clone(),
             data_type: ci.data_type.clone(),
             nullable: true,
             constraints: storage_manager::catalog::types::Constraints::default(),
-        }
-    }).collect();
+        })
+        .collect();
 
     // Create the table
     create_table(catalog, db, &ctas.table, columns);
@@ -825,10 +967,14 @@ pub fn execute_create_table_as_select(
     // Insert all rows from the SELECT result
     let mut inserted = 0usize;
     for tuple in &tuples {
-        let value_strs: Vec<String> = tuple.values.iter().map(|v| match v {
-            Some(dv) => format!("{}", dv),
-            None => "NULL".to_string(),
-        }).collect();
+        let value_strs: Vec<String> = tuple
+            .values
+            .iter()
+            .map(|v| match v {
+                Some(dv) => format!("{}", dv),
+                None => "NULL".to_string(),
+            })
+            .collect();
         let value_refs: Vec<&str> = value_strs.iter().map(|s| s.as_str()).collect();
         match insert_single_tuple(catalog, db, &ctas.table, &value_refs) {
             Ok(true) => inserted += 1,
@@ -837,7 +983,10 @@ pub fn execute_create_table_as_select(
         }
     }
 
-    println!("Table '{}' created successfully with {} row(s).", ctas.table, inserted);
+    println!(
+        "Table '{}' created successfully with {} row(s).",
+        ctas.table, inserted
+    );
     Ok(())
 }
 
@@ -845,16 +994,17 @@ pub fn execute_create_table_as_select(
 fn logical_plan_schema(plan: &rook_ast::logical::LogicalPlan) -> Vec<(String, String)> {
     use rook_ast::logical::*;
     match plan {
-        LogicalPlan::Project(p) => {
-            p.expressions.iter().map(|ne| {
-                (ne.name.clone(), "VARCHAR(255)".to_string())
-            }).collect()
-        }
-        LogicalPlan::TableScan(t) => {
-            t.schema.columns.iter().map(|c| {
-                (c.name.clone(), c.data_type.to_string())
-            }).collect()
-        }
+        LogicalPlan::Project(p) => p
+            .expressions
+            .iter()
+            .map(|ne| (ne.name.clone(), "VARCHAR(255)".to_string()))
+            .collect(),
+        LogicalPlan::TableScan(t) => t
+            .schema
+            .columns
+            .iter()
+            .map(|c| (c.name.clone(), c.data_type.to_string()))
+            .collect(),
         LogicalPlan::Filter(f) => logical_plan_schema(&f.child),
         LogicalPlan::Sort(s) => logical_plan_schema(&s.child),
         LogicalPlan::Limit(l) => logical_plan_schema(&l.child),
@@ -870,11 +1020,12 @@ fn logical_plan_schema(plan: &rook_ast::logical::LogicalPlan) -> Vec<(String, St
         LogicalPlan::Subquery(sq) => logical_plan_schema(&sq.subquery),
         LogicalPlan::Cte(c) => logical_plan_schema(&c.outer),
         LogicalPlan::RecursiveCte(rc) => logical_plan_schema(&rc.outer),
-        LogicalPlan::CteScan(cs) => {
-            cs.schema.columns.iter().map(|c| {
-                (c.name.clone(), c.data_type.to_string())
-            }).collect()
-        }
+        LogicalPlan::CteScan(cs) => cs
+            .schema
+            .columns
+            .iter()
+            .map(|c| (c.name.clone(), c.data_type.to_string()))
+            .collect(),
         LogicalPlan::Insert(inp) => logical_plan_schema(&inp.child),
     }
 }
@@ -893,13 +1044,18 @@ pub fn execute_drop_view(
         ));
     }
 
-    let exists = catalog.databases.get(db)
+    let exists = catalog
+        .databases
+        .get(db)
         .map(|d| d.views.contains_key(view_name))
         .unwrap_or(false);
 
     if !exists {
         if if_exists {
-            println!("View '{}' does not exist (IF EXISTS specified, skipping).", view_name);
+            println!(
+                "View '{}' does not exist (IF EXISTS specified, skipping).",
+                view_name
+            );
             return Ok(());
         }
         return Err(io::Error::new(
@@ -939,14 +1095,17 @@ pub fn remove_index_files_for_table(db: &str, table: &str, index_name: Option<&s
     // later CREATE INDEX on the same name cannot reuse the stale tree.
     if let Some(name) = index_name {
         storage_manager::backend::cache::evict_btree(std::path::Path::new(&format!(
-            "database/base/{}/{}.{}.idx", db, table, name
+            "database/base/{}/{}.{}.idx",
+            db, table, name
         )));
         storage_manager::backend::cache::evict_btree(std::path::Path::new(&format!(
-            "database/base/{}/{}.idx", db, table
+            "database/base/{}/{}.idx",
+            db, table
         )));
     } else {
         storage_manager::backend::cache::evict_btree(std::path::Path::new(&format!(
-            "database/base/{}/{}.idx", db, table
+            "database/base/{}/{}.idx",
+            db, table
         )));
         if let Ok(entries) = std::fs::read_dir(base_path) {
             let prefix = format!("{}.", table);
@@ -982,7 +1141,9 @@ pub fn remove_index_files_for_table(db: &str, table: &str, index_name: Option<&s
             for entry in entries.flatten() {
                 let fname = entry.file_name().to_string_lossy().to_string();
                 // Match {table}.{anything}.idx or {table}.{anything}.idx.meta
-                if fname.starts_with(&prefix) && (fname.ends_with(".idx") || fname.ends_with(".idx.meta")) {
+                if fname.starts_with(&prefix)
+                    && (fname.ends_with(".idx") || fname.ends_with(".idx.meta"))
+                {
                     let _ = std::fs::remove_file(entry.path());
                 }
             }
@@ -1012,7 +1173,9 @@ pub fn rename_index_files_for_table(db: &str, old_name: &str, new_name: &str) {
         let prefix = format!("{}.", old_name);
         for entry in entries.flatten() {
             let fname = entry.file_name().to_string_lossy().to_string();
-            if fname.starts_with(&prefix) && (fname.ends_with(".idx") || fname.ends_with(".idx.meta")) {
+            if fname.starts_with(&prefix)
+                && (fname.ends_with(".idx") || fname.ends_with(".idx.meta"))
+            {
                 // Extract the suffix after {old_name}.
                 let suffix = fname.strip_prefix(&prefix).unwrap_or(&fname);
                 let new_fname = format!("database/base/{}/{}.{}", db, new_name, suffix);
@@ -1065,7 +1228,10 @@ pub fn execute_drop_index(
                         let _ = std::fs::remove_file(&legacy_meta_path);
                     } else {
                         if if_exists {
-                            println!("Index '{}' does not exist (IF EXISTS specified, skipping).", index_name);
+                            println!(
+                                "Index '{}' does not exist (IF EXISTS specified, skipping).",
+                                index_name
+                            );
                             return Ok(());
                         }
                         return Err(io::Error::new(
@@ -1075,7 +1241,10 @@ pub fn execute_drop_index(
                     }
                 } else {
                     if if_exists {
-                        println!("Index '{}' does not exist (IF EXISTS specified, skipping).", index_name);
+                        println!(
+                            "Index '{}' does not exist (IF EXISTS specified, skipping).",
+                            index_name
+                        );
                         return Ok(());
                     }
                     return Err(io::Error::new(
@@ -1087,7 +1256,10 @@ pub fn execute_drop_index(
                 // Legacy file exists but no meta — check via sys_indexes
                 // If no named file exists and no legacy match, it's an error
                 if if_exists {
-                    println!("Index '{}' does not exist (IF EXISTS specified, skipping).", index_name);
+                    println!(
+                        "Index '{}' does not exist (IF EXISTS specified, skipping).",
+                        index_name
+                    );
                     return Ok(());
                 }
                 return Err(io::Error::new(
@@ -1097,7 +1269,10 @@ pub fn execute_drop_index(
             }
         } else {
             if if_exists {
-                println!("Index '{}' does not exist (IF EXISTS specified, skipping).", index_name);
+                println!(
+                    "Index '{}' does not exist (IF EXISTS specified, skipping).",
+                    index_name
+                );
                 return Ok(());
             }
             return Err(io::Error::new(
@@ -1107,14 +1282,19 @@ pub fn execute_drop_index(
         }
 
         // Clean up sys_indexes
-        if let Err(e) = storage_manager::backend::system_table::delete_index_metadata(db, table_name, index_name) {
+        if let Err(e) = storage_manager::backend::system_table::delete_index_metadata(
+            db, table_name, index_name,
+        ) {
             eprintln!(
                 "[DropIndex] Warning: failed to clean up sys_indexes for '{}': {}",
                 index_name, e
             );
         }
 
-        println!("Dropped index '{}' from table '{}'.", index_name, table_name);
+        println!(
+            "Dropped index '{}' from table '{}'.",
+            index_name, table_name
+        );
     } else {
         // No table name — try to find the index file by scanning
         let base_dir = format!("database/base/{}", db);
@@ -1141,13 +1321,19 @@ pub fn execute_drop_index(
                         let idx_name_part = &without_suffix[dot_pos + 1..];
                         if idx_name_part.eq_ignore_ascii_case(index_name) {
                             let idx_path = entry.path();
-                            let meta_path = format!("database/base/{}/{}", db, fname.replace(".idx", ".idx.meta"));
+                            let meta_path = format!(
+                                "database/base/{}/{}",
+                                db,
+                                fname.replace(".idx", ".idx.meta")
+                            );
                             std::fs::remove_file(&idx_path)?;
                             let _ = std::fs::remove_file(&meta_path);
 
-                            if let Err(e) = storage_manager::backend::system_table::delete_index_metadata(
-                                db, tbl_name, index_name,
-                            ) {
+                            if let Err(e) =
+                                storage_manager::backend::system_table::delete_index_metadata(
+                                    db, tbl_name, index_name,
+                                )
+                            {
                                 eprintln!(
                                     "[DropIndex] Warning: failed to clean up sys_indexes: {}",
                                     e
@@ -1168,7 +1354,8 @@ pub fn execute_drop_index(
                                 column_name: String,
                             }
                             if let Ok(meta) = serde_json::from_str::<IndexMeta>(&meta_json) {
-                                let generated_name = format!("idx_{}_{}", tbl_name, meta.column_name);
+                                let generated_name =
+                                    format!("idx_{}_{}", tbl_name, meta.column_name);
                                 if generated_name.eq_ignore_ascii_case(index_name) {
                                     let idx_path = entry.path();
                                     std::fs::remove_file(&idx_path)?;
@@ -1183,7 +1370,10 @@ pub fn execute_drop_index(
                                         );
                                     }
 
-                                    println!("Dropped index '{}' from table '{}'.", index_name, tbl_name);
+                                    println!(
+                                        "Dropped index '{}' from table '{}'.",
+                                        index_name, tbl_name
+                                    );
                                     found = true;
                                     break;
                                 }
@@ -1196,7 +1386,10 @@ pub fn execute_drop_index(
 
         if !found {
             if if_exists {
-                println!("Index '{}' does not exist (IF EXISTS specified, skipping).", index_name);
+                println!(
+                    "Index '{}' does not exist (IF EXISTS specified, skipping).",
+                    index_name
+                );
             } else {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
@@ -1208,4 +1401,3 @@ pub fn execute_drop_index(
 
     Ok(())
 }
-

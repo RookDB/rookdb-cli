@@ -1,7 +1,7 @@
 use std::io;
 
 use rook_ast::*;
-use storage_manager::catalog::{show_databases, show_tables, Catalog};
+use storage_manager::catalog::{Catalog, show_databases, show_tables};
 use storage_manager::executor::physical::execute_plan;
 
 /// Handle SELECT
@@ -19,16 +19,14 @@ pub fn handle_select(
     };
 
     match storage_manager::planner::plan_query(plan, catalog, &db) {
-        Ok(logical_plan) => {
-            match execute_plan(&logical_plan, catalog, &db) {
-                Ok(count) => {
-                    println!("{} row(s) returned.\n", count);
-                }
-                Err(e) => {
-                    println!("Execution error: {}", e);
-                }
+        Ok(logical_plan) => match execute_plan(&logical_plan, catalog, &db) {
+            Ok(count) => {
+                println!("{} row(s) returned.\n", count);
             }
-        }
+            Err(e) => {
+                println!("Execution error: {}", e);
+            }
+        },
         Err(e) => {
             println!("Planning error: {}", e);
         }
@@ -52,16 +50,14 @@ pub fn handle_set_operation(
     };
 
     match storage_manager::planner::plan_query(plan, catalog, &db) {
-        Ok(logical_plan) => {
-            match execute_plan(&logical_plan, catalog, &db) {
-                Ok(count) => {
-                    println!("{} row(s) returned.\n", count);
-                }
-                Err(e) => {
-                    println!("Execution error: {}", e);
-                }
+        Ok(logical_plan) => match execute_plan(&logical_plan, catalog, &db) {
+            Ok(count) => {
+                println!("{} row(s) returned.\n", count);
             }
-        }
+            Err(e) => {
+                println!("Execution error: {}", e);
+            }
+        },
         Err(e) => {
             println!("Planning error: {}", e);
         }
@@ -80,10 +76,7 @@ pub fn handle_show_databases(
 }
 
 /// Handle SHOW TABLES
-pub fn handle_show_tables(
-    catalog: &Catalog,
-    current_db: &mut Option<String>,
-) -> io::Result<()> {
+pub fn handle_show_tables(catalog: &Catalog, current_db: &mut Option<String>) -> io::Result<()> {
     if let Some(ref db_name) = *current_db {
         show_tables(catalog, db_name);
     } else {
