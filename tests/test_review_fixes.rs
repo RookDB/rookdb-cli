@@ -811,3 +811,72 @@ fn renaming_a_table_carries_its_foreign_keys() {
         &[&["1", "1"], &["2", "2"]],
     );
 }
+
+// ── Constant division by zero; aggregate header types ───────────────────────
+
+#[test]
+fn constant_division_by_zero_is_reported_as_such() {
+    let ws = Workspace::new("rf_div0");
+    run(
+        &ws,
+        &[
+            "CREATE DATABASE d;",
+            "USE d;",
+            "CREATE TABLE a (id INT);",
+            "INSERT INTO a VALUES (1);",
+        ],
+    );
+    for sql in [
+        "SELECT 10 / 0 FROM a;",
+        "SELECT 10 % 0 FROM a;",
+        "SELECT id / 0 FROM a;",
+    ] {
+        let out = run(&ws, &["USE d;", sql]);
+        assert!(out.contains("Division by zero"), "{}: {}", sql, out);
+        assert!(!out.contains("Cannot infer type"), "{}: {}", sql, out);
+    }
+}
+
+#[test]
+fn sum_header_names_the_type_of_the_value_below_it() {
+    let ws = Workspace::new("rf_sumtype");
+    run(
+        &ws,
+        &[
+            "CREATE DATABASE d;",
+            "USE d;",
+            "CREATE TABLE a (id INT, b BIGINT, r REAL);",
+            "INSERT INTO a VALUES (1, 9223372036854775807, 0.1);",
+            "INSERT INTO a VALUES (2, 9223372036854775807, 0.1);",
+            "CREATE TABLE t (b BIGINT);",
+        ],
+    );
+    let out = run(&ws, &["USE d;", "SELECT SUM(id), SUM(b), SUM(r) FROM a;"]);
+    let table = common::parse_last_table(&out);
+    assert_eq!(
+        table.rows,
+        [["3", "18446744073709551614", "0.2"]],
+        "{}",
+        out
+    );
+    assert!(out.contains("SUM: BIGINT"), "{}", out);
+    assert!(out.contains("SUM: NUMERIC(38,0)"), "{}", out);
+    assert!(out.contains("SUM: REAL"), "{}", out);
+
+    // A NUMERIC total assigns to a BIGINT column only when it fits.
+    let out = run(
+        &ws,
+        &[
+            "USE d;",
+            "INSERT INTO t SELECT SUM(b) FROM a;",
+            "INSERT INTO t SELECT SUM(b) FROM a WHERE id = 1;",
+        ],
+    );
+    assert!(out.contains("out of range for BIGINT"), "{}", out);
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT b FROM t;",
+        &[&["9223372036854775807"]],
+    );
+}
