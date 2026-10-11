@@ -43,7 +43,6 @@ fn main() -> io::Result<()> {
         let msg = record.args().to_string();
         // Filter out noisy internal engine setup lines
         if msg.starts_with("[BTree::open]")
-            || msg.starts_with("[init_table]")
             || msg.starts_with("[SystemCatalog]")
             || msg.contains("catalog directory")
             || msg.contains("Saving catalog")
