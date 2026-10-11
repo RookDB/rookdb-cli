@@ -258,7 +258,7 @@ fn count_via_sql(catalog: &Catalog, db: &str, sql: &str) -> Result<u64, String> 
     let (norm, params) = storage_manager::backend::planner::plan_cache::normalize_sql(sql);
     let logical = if params.is_empty()
         && let Some(storage_manager::backend::planner::plan_cache::PlanCacheEntry::Plan(p)) =
-            storage_manager::backend::planner::plan_cache::get_cached_plan(db, &norm)
+            storage_manager::backend::planner::plan_cache::get_cached_plan(catalog.engine(), db, &norm)
     {
         p
     } else {
@@ -267,6 +267,7 @@ fn count_via_sql(catalog: &Catalog, db: &str, sql: &str) -> Result<u64, String> 
             storage_manager::planner::plan_query(&plan, catalog, db).map_err(|e| e.to_string())?;
         if params.is_empty() {
             storage_manager::backend::planner::plan_cache::store_cached_plan(
+                catalog.engine(),
                 db,
                 &norm,
                 storage_manager::backend::planner::plan_cache::PlanCacheEntry::Plan(
