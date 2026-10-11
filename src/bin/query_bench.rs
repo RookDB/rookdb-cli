@@ -7,7 +7,8 @@
 //! Builds `t(id INT, k INT, name VARCHAR(20))` with `rows` rows (default
 //! 100,000; `k` has 1,000 distinct values) in a fresh directory under the
 //! system temp dir, then runs each query `repeats` times (default 5) and
-//! prints the median wall time.
+//! prints the fastest and the median wall time. On a shared machine the
+//! fastest run is the steadier figure.
 
 use std::time::Instant;
 
@@ -25,6 +26,9 @@ const QUERIES: &[(&str, &str)] = &[
         "range_filter",
         "SELECT * FROM t WHERE id BETWEEN 1000 AND 21000",
     ),
+    ("project_int", "SELECT id FROM t"),
+    ("project_ints", "SELECT id, k FROM t"),
+    ("project_str", "SELECT name FROM t"),
     ("project_all", "SELECT * FROM t"),
 ];
 
@@ -81,8 +85,9 @@ fn main() {
         times.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let n = run(&mut s, sql);
         println!(
-            "[RESULT] {:<13} {:>9.2} ms  ({} rows)  {}",
+            "[RESULT] {:<13} min {:>7.2} ms  median {:>7.2} ms  ({} rows)  {}",
             name,
+            times[0],
             times[times.len() / 2],
             n,
             sql
