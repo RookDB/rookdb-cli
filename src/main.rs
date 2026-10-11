@@ -245,7 +245,7 @@ fn execute(
         return;
     }
 
-    match parse_sql(sql) {
+    match parse_sql(sql).map(|plan| resolve_table_names(plan, catalog, current_db)) {
         Ok(plan) => match plan {
             QueryPlan::ShowDatabases => handlers::dql::handle_show_databases(catalog, current_db),
             QueryPlan::DropDatabase(ref p) => {
@@ -359,4 +359,38 @@ fn split_complete_statements(buffer: &str) -> (Vec<String>, String) {
     // prompt does not hang on "-- pending".
     let remainder = current.trim().to_string();
     (statements, remainder)
+}
+
+/// Identifiers are case-insensitive: point each statement's target table at
+/// the spelling it was created with (`DELETE FROM T` reaches table `t`).
+/// SELECT sources are resolved the same way by the planner.
+fn resolve_table_names(
+    mut plan: QueryPlan,
+    catalog: &storage_manager::catalog::Catalog,
+    current_db: &Option<String>,
+) -> QueryPlan {
+    let Some(db) = current_db.as_ref().and_then(|d| catalog.databases.get(d)) else {
+        return plan;
+    };
+    let resolve = |name: &mut String| {
+        if !db.tables.contains_key(name.as_str()) {
+            let mut matches = db.tables.keys().filter(|t| t.eq_ignore_ascii_case(name));
+            if let (Some(stored), None) = (matches.next(), matches.next()) {
+                *name = stored.clone();
+            }
+        }
+    };
+    match &mut plan {
+        QueryPlan::Insert(p) => resolve(&mut p.table),
+        QueryPlan::Update(p) => resolve(&mut p.table),
+        QueryPlan::Delete(p) => resolve(&mut p.table),
+        QueryPlan::DropTable(p) => resolve(&mut p.table),
+        QueryPlan::Truncate(p) => resolve(&mut p.table),
+        QueryPlan::AlterTable(p) => resolve(&mut p.table),
+        QueryPlan::Vacuum(p) => resolve(&mut p.table),
+        QueryPlan::CreateIndex(p) => resolve(&mut p.table_name),
+        QueryPlan::DropIndex(p) => resolve(&mut p.table_name),
+        _ => {}
+    }
+    plan
 }

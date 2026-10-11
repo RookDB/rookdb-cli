@@ -705,3 +705,57 @@ fn cascade_delete_respects_a_restricting_grandchild() {
     run(&ws, &["USE d;", "DELETE FROM p WHERE id = 2;"]);
     expect_rows(&ws, &["USE d;"], "SELECT id FROM c1;", &[&["13"]]);
 }
+
+// ── Names: CTE aliases, column lists, identifier case ───────────────────────
+
+#[test]
+fn cte_aliases_and_column_lists_resolve() {
+    let ws = Workspace::new("rf_ctealias");
+    run(&ws, JOIN_SETUP);
+    // A CTE joined to itself: each scan is qualified by its own alias.
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "WITH RECURSIVE c AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM c WHERE n < 3) \
+         SELECT x.n, y.n FROM c x JOIN c y ON x.n = y.n ORDER BY 1;",
+        &[&["1", "1"], &["2", "2"], &["3", "3"]],
+    );
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < 3) \
+         SELECT n FROM c ORDER BY n;",
+        &[&["1"], &["2"], &["3"]],
+    );
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT s.id FROM (SELECT id FROM a) s WHERE s.id = 2;",
+        &[&["2"]],
+    );
+}
+
+#[test]
+fn identifiers_are_case_insensitive() {
+    let ws = Workspace::new("rf_case");
+    let out = run(
+        &ws,
+        &[
+            "CREATE DATABASE d;",
+            "USE d;",
+            "CREATE TABLE Mixed (Id INT, Val INT);",
+            "INSERT INTO mixed VALUES (1, 10);",
+            "INSERT INTO MIXED (ID, val) VALUES (2, 20);",
+            "UPDATE mixed SET VAL = 99 WHERE id = 2;",
+            "DELETE FROM MIXED WHERE ID = 1;",
+        ],
+    );
+    assert!(out.contains("Updated 1 row(s)"), "{}", out);
+    assert!(out.contains("Deleted 1 row(s)"), "{}", out);
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT id, VAL FROM mixed ORDER BY ID;",
+        &[&["2", "99"]],
+    );
+}
