@@ -5,7 +5,8 @@
 //!   ./target/release/query_bench [rows] [repeats]
 //!
 //! Builds `t(id INT, k INT, name VARCHAR(20))` with `rows` rows (default
-//! 100,000; `k` has 1,000 distinct values) in a fresh directory under the
+//! 100,000; `k` has 1,000 distinct values) and the same rows in `p`, which
+//! has a primary key on `id` and an index on `k`, in a fresh directory under the
 //! system temp dir, then runs each query `repeats` times (default 5) and
 //! prints the fastest and the median wall time. On a shared machine the
 //! fastest run is the steadier figure.
@@ -32,6 +33,12 @@ const QUERIES: &[(&str, &str)] = &[
     ("project_ints", "SELECT id, k FROM t"),
     ("project_str", "SELECT name FROM t"),
     ("project_all", "SELECT * FROM t"),
+    // The same rows in `p`, read through its indexes.
+    (
+        "pk_range",
+        "SELECT * FROM p WHERE id BETWEEN 1000 AND 21000",
+    ),
+    ("index_eq", "SELECT * FROM p WHERE k = 77"),
 ];
 
 fn run(session: &mut Session, sql: &str) -> usize {
@@ -62,15 +69,19 @@ fn main() {
     run(&mut s, "CREATE DATABASE bench");
     run(&mut s, "USE bench");
     run(&mut s, "CREATE TABLE t (id INT, k INT, name VARCHAR(20))");
+    run(
+        &mut s,
+        "CREATE TABLE p (id INT PRIMARY KEY, k INT, name VARCHAR(20))",
+    );
+    run(&mut s, "CREATE INDEX p_k ON p (k)");
     let load = Instant::now();
     for start in (0..rows).step_by(500) {
         let values: Vec<String> = (start..(start + 500).min(rows))
             .map(|i| format!("({}, {}, 'name_{:08}')", i, i % 1000, (i * 7919) % rows))
             .collect();
-        run(
-            &mut s,
-            &format!("INSERT INTO t VALUES {}", values.join(", ")),
-        );
+        let values = values.join(", ");
+        run(&mut s, &format!("INSERT INTO t VALUES {}", values));
+        run(&mut s, &format!("INSERT INTO p VALUES {}", values));
     }
     storage_manager::backend::cache::checkpoint_durable();
     println!("[LOAD] {} rows in {} ms", rows, load.elapsed().as_millis());
