@@ -453,3 +453,93 @@ fn create_table_as_select_types_an_empty_result() {
     // `a` is an INT (unquoted), not VARCHAR(255).
     expect_rows(&ws, &["USE d;"], "SELECT a, s FROM c2;", &[&["5", "'y'"]]);
 }
+
+// ── Expressions and ORDER BY ────────────────────────────────────────────────
+
+#[test]
+fn constant_and_boolean_predicates_evaluate() {
+    let ws = Workspace::new("rf_constpred");
+    run(&ws, JOIN_SETUP);
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT id FROM a WHERE 1 = 1 ORDER BY id;",
+        &[&["1"], &["2"], &["3"], &["4"]],
+    );
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT id FROM a WHERE 2 > 1 AND k = 1 ORDER BY id;",
+        &[&["1"], &["2"]],
+    );
+    expect_rows(&ws, &["USE d;"], "SELECT id FROM a WHERE 1 = 2;", &[]);
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT id FROM a WHERE k = 2 OR FALSE ORDER BY id;",
+        &[&["3"], &["4"]],
+    );
+}
+
+#[test]
+fn concat_operator_propagates_null_and_modulo_works() {
+    let ws = Workspace::new("rf_concat");
+    run(&ws, JOIN_SETUP);
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT v || NULL, 'a' || v, k % 2 FROM r ORDER BY k;",
+        &[
+            &["NULL", "'aone'", "1"],
+            &["NULL", "'atwo'", "0"],
+            &["NULL", "'athree'", "1"],
+        ],
+    );
+    let out = run(
+        &ws,
+        &["USE d;", "SELECT TRIM(BOTH 'x' FROM 'xxaxx') FROM r;"],
+    );
+    assert!(
+        out.contains("Parse error") && out.contains("TRIM"),
+        "{}",
+        out
+    );
+}
+
+#[test]
+fn group_by_and_order_by_accept_select_expressions() {
+    let ws = Workspace::new("rf_groupexpr");
+    run(&ws, JOIN_SETUP);
+    // x is 10, 20, NULL, 20.
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT x + 1, COUNT(*) FROM a GROUP BY x + 1 ORDER BY 2 DESC, 1;",
+        &[&["21", "2"], &["NULL", "1"], &["11", "1"]],
+    );
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT k, COUNT(x) FROM a GROUP BY k ORDER BY COUNT(x) DESC;",
+        &[&["1", "2"], &["2", "1"]],
+    );
+}
+
+#[test]
+fn order_by_prefers_a_select_alias_over_an_input_column() {
+    let ws = Workspace::new("rf_orderalias");
+    run(&ws, JOIN_SETUP);
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT -id AS id FROM a ORDER BY id;",
+        &[&["-4"], &["-3"], &["-2"], &["-1"]],
+    );
+    // `id` is the output built from k, not the base column.
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT k AS id, id AS k FROM a ORDER BY id DESC, k;",
+        &[&["2", "3"], &["2", "4"], &["1", "1"], &["1", "2"]],
+    );
+}
