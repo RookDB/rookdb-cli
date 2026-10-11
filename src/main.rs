@@ -193,14 +193,15 @@ fn main() -> io::Result<()> {
                 print_sql_banner(&stmt);
             }
             execute(&stmt, &mut catalog, &mut current_db);
-            // Statement boundary: make the statement's writes durable before
-            // prompting again (matches the pre-cache flush-on-drop contract).
+            // Statement boundary: write the statement's pages to their files.
+            // The fsync is shared by statements arriving within the sync
+            // interval, so a script does not pay one per row.
             storage_manager::backend::cache::checkpoint();
         }
     }
 
-    // EOF path may have executed a trailing statement.
-    storage_manager::backend::cache::checkpoint();
+    // Everything still un-fsynced goes to disk before the process exits.
+    storage_manager::backend::cache::checkpoint_durable();
     Ok(())
 }
 
