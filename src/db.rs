@@ -341,6 +341,17 @@ pub fn execute_alter_table(
                 ));
             }
             let old_name = alter.table.clone();
+            // Foreign keys store the parent's name; renaming it would leave
+            // every child unable to insert. Refuse instead.
+            if let Some(child) = first_referencing_table(db, &old_name) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "Cannot rename table '{}': it is referenced by a foreign key on '{}'",
+                        old_name, child
+                    ),
+                ));
+            }
             // Rename the heap file
             let old_dat = format!("database/base/{}/{}.dat", db, old_name);
             let new_dat = format!("database/base/{}/{}.dat", db, new_name);
@@ -367,7 +378,7 @@ pub fn execute_alter_table(
             return Ok(());
         }
         AlterTableAction::AddColumn { column_def } => {
-            let col = storage_manager::catalog::Column::new(
+            let mut col = storage_manager::catalog::Column::new(
                 column_def.name.clone(),
                 column_def.data_type.parse().map_err(|e: String| {
                     io::Error::new(
@@ -376,6 +387,49 @@ pub fn execute_alter_table(
                     )
                 })?,
             );
+            // Apply the column's constraints; refuse the ones this path cannot
+            // honour rather than dropping them.
+            let mut add_default: Option<DataValue> = None;
+            for constraint in &column_def.constraints {
+                let upper = constraint.to_ascii_uppercase();
+                if upper == "NOT NULL" {
+                    col.nullable = false;
+                    col.constraints.not_null = true;
+                } else if upper == "NULL" {
+                    // Explicitly nullable: the default.
+                } else if upper.starts_with("DEFAULT ") || upper.starts_with("DEFAULT(") {
+                    let raw = crate::handlers::ddl::strip_outer_parens(
+                        constraint["DEFAULT".len()..].trim(),
+                    );
+                    if !raw.eq_ignore_ascii_case("NULL") {
+                        let dv = storage_manager::executor::create_index::parse_string_to_value(
+                            &col.data_type,
+                            raw,
+                        )
+                        .map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                format!(
+                                    "Invalid DEFAULT {} for column '{}': {}",
+                                    raw, column_def.name, e
+                                ),
+                            )
+                        })?;
+                        add_default = Some(dv);
+                    }
+                } else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!(
+                            "ALTER TABLE ADD COLUMN does not support the constraint '{}'",
+                            constraint
+                        ),
+                    ));
+                }
+            }
+            col.constraints.default = add_default.clone();
+            let add_not_null = col.constraints.not_null;
+
             // Check for duplicate column name
             if updated_table
                 .columns
@@ -429,7 +483,17 @@ pub fn execute_alter_table(
                         })?;
                     // Append NULL for the new column
                     let mut new_values: Vec<Option<DataValue>> = old_values;
-                    new_values.push(None);
+                    if add_not_null && add_default.is_none() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            format!(
+                                "Cannot add NOT NULL column '{}' without a DEFAULT to a table that has rows",
+                                column_def.name
+                            ),
+                        ));
+                    }
+                    // Existing rows take the column's DEFAULT (NULL without one).
+                    new_values.push(add_default.clone());
                     // Re-serialize with NEW schema (includes the added column)
                     let new_row_bytes = serialize_nullable_typed_row(&new_schema, &new_values)
                         .map_err(|e| {
@@ -615,6 +679,16 @@ pub fn execute_alter_table(
                     )
                 })?;
             col.name = new_name.clone();
+            // CHECK expressions are re-emitted from the catalog on save.
+            for c in updated_table.columns.iter_mut() {
+                if let Some(expr) = c.constraints.check.take() {
+                    c.constraints.check = Some(
+                        storage_manager::backend::system_table::rename_identifier_in_expr(
+                            &expr, old_name, new_name,
+                        ),
+                    );
+                }
+            }
         }
         AlterTableAction::SetDefault {
             column,
@@ -631,11 +705,23 @@ pub fn execute_alter_table(
                     )
                 })?;
             // Parse the default value string into a DataValue
-            let default_dv = storage_manager::executor::create_index::parse_string_to_value(
-                &col.data_type,
-                default_expr,
-            )
-            .ok();
+            let raw = crate::handlers::ddl::strip_outer_parens(default_expr);
+            let default_dv = if raw.eq_ignore_ascii_case("NULL") {
+                None
+            } else {
+                Some(
+                    storage_manager::executor::create_index::parse_string_to_value(
+                        &col.data_type,
+                        raw,
+                    )
+                    .map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            format!("Invalid DEFAULT {} for column '{}': {}", raw, column, e),
+                        )
+                    })?,
+                )
+            };
             col.constraints.default = default_dv;
         }
         AlterTableAction::DropDefault { column } => {
@@ -769,6 +855,15 @@ pub fn execute_alter_table(
     Ok(())
 }
 
+/// Name of a table, other than `table` itself, holding a foreign key that
+/// references `table`.
+fn first_referencing_table(db: &str, table: &str) -> Option<String> {
+    storage_manager::backend::cache::referencing_fks(db, table)
+        .iter()
+        .map(|fk| fk.0.clone())
+        .find(|child| !child.eq_ignore_ascii_case(table))
+}
+
 /// Execute a TRUNCATE TABLE query — removes all data from a table.
 pub fn execute_truncate(catalog: &Catalog, db: &str, table: &str) -> io::Result<()> {
     // Validate database and table exist
@@ -783,6 +878,17 @@ pub fn execute_truncate(catalog: &Catalog, db: &str, table: &str) -> io::Result<
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
             format!("Table '{}' not found in database '{}'", table, db),
+        ));
+    }
+
+    // Emptying a referenced parent would orphan its children.
+    if let Some(child) = first_referencing_table(db, table) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "Cannot truncate table '{}': it is referenced by a foreign key on '{}'",
+                table, child
+            ),
         ));
     }
 
@@ -919,37 +1025,6 @@ pub fn execute_create_table_as_select(
             }
         };
 
-    if tuples.is_empty() {
-        // No rows — infer column types from the plan's output schema
-        let schema = logical_plan_schema(&logical_plan);
-        let columns: Vec<storage_manager::catalog::Column> = schema
-            .into_iter()
-            .map(|(name, dt_str)| {
-                let dt = dt_str
-                    .parse::<storage_manager::types::DataType>()
-                    .unwrap_or(storage_manager::types::DataType::Varchar(255));
-                storage_manager::catalog::Column {
-                    name,
-                    data_type: dt,
-                    nullable: true,
-                    constraints: storage_manager::catalog::types::Constraints::default(),
-                }
-            })
-            .collect();
-
-        if columns.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Cannot determine column types for CREATE TABLE AS SELECT".to_string(),
-            ));
-        }
-
-        // Create the table with inferred column types
-        create_table(catalog, db, &ctas.table, columns);
-        println!("Table '{}' created successfully (0 rows).", ctas.table);
-        return Ok(());
-    }
-
     // Infer column types from the query output schema
     let columns: Vec<storage_manager::catalog::Column> = output_schema
         .iter()
@@ -960,6 +1035,13 @@ pub fn execute_create_table_as_select(
             constraints: storage_manager::catalog::types::Constraints::default(),
         })
         .collect();
+
+    if columns.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Cannot determine column types for CREATE TABLE AS SELECT".to_string(),
+        ));
+    }
 
     // Create the table
     create_table(catalog, db, &ctas.table, columns);
@@ -988,46 +1070,6 @@ pub fn execute_create_table_as_select(
         ctas.table, inserted
     );
     Ok(())
-}
-
-/// Extract the output column names and types from a LogicalPlan.
-fn logical_plan_schema(plan: &rook_ast::logical::LogicalPlan) -> Vec<(String, String)> {
-    use rook_ast::logical::*;
-    match plan {
-        LogicalPlan::Project(p) => p
-            .expressions
-            .iter()
-            .map(|ne| (ne.name.clone(), "VARCHAR(255)".to_string()))
-            .collect(),
-        LogicalPlan::TableScan(t) => t
-            .schema
-            .columns
-            .iter()
-            .map(|c| (c.name.clone(), c.data_type.to_string()))
-            .collect(),
-        LogicalPlan::Filter(f) => logical_plan_schema(&f.child),
-        LogicalPlan::Sort(s) => logical_plan_schema(&s.child),
-        LogicalPlan::Limit(l) => logical_plan_schema(&l.child),
-        LogicalPlan::Distinct(d) => logical_plan_schema(&d.child),
-        LogicalPlan::Aggregate(a) => logical_plan_schema(&a.child),
-        LogicalPlan::Join(j) => {
-            let mut left = logical_plan_schema(&j.left);
-            let right = logical_plan_schema(&j.right);
-            left.extend(right);
-            left
-        }
-        LogicalPlan::SetOp(s) => logical_plan_schema(&s.left),
-        LogicalPlan::Subquery(sq) => logical_plan_schema(&sq.subquery),
-        LogicalPlan::Cte(c) => logical_plan_schema(&c.outer),
-        LogicalPlan::RecursiveCte(rc) => logical_plan_schema(&rc.outer),
-        LogicalPlan::CteScan(cs) => cs
-            .schema
-            .columns
-            .iter()
-            .map(|c| (c.name.clone(), c.data_type.to_string()))
-            .collect(),
-        LogicalPlan::Insert(inp) => logical_plan_schema(&inp.child),
-    }
 }
 
 /// Execute a DROP VIEW query — removes the view definition from the catalog.

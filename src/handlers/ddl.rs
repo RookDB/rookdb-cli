@@ -107,6 +107,20 @@ pub fn handle_create_table(
         }
     };
 
+    // Validate everything before touching the catalog or creating files: a
+    // table must never be created with part of its definition missing.
+    if catalog
+        .databases
+        .get(&db)
+        .is_some_and(|d| d.tables.contains_key(&params.table))
+    {
+        println!(
+            "Table '{}' already exists in database '{}'.",
+            params.table, db
+        );
+        return Ok(());
+    }
+
     let mut columns = Vec::new();
 
     for col in &params.columns {
@@ -117,7 +131,8 @@ pub fn handle_create_table(
                     "Unknown type '{}': {}. Supported: SMALLINT, INT, BIGINT, REAL, DOUBLE PRECISION, NUMERIC(p,s), DECIMAL(p,s), BOOLEAN, CHAR(n), CHARACTER(n), VARCHAR(n), DATE, TIME, TIMESTAMP, BIT(n)",
                     col.data_type, err
                 );
-                continue;
+                println!("Table '{}' was not created.", params.table);
+                return Ok(());
             }
         };
 
@@ -133,29 +148,40 @@ pub fn handle_create_table(
             .any(|c| c.eq_ignore_ascii_case("PRIMARY KEY"));
 
         let default_val = constraint_strs.iter().find_map(|c| {
-            let upper = c.to_uppercase();
-            if let Some(_val) = upper.strip_prefix("DEFAULT ") {
-                let raw_val = &c["DEFAULT ".len()..];
-                Some(raw_val.to_string())
-            } else if let Some(val) = upper.strip_prefix("DEFAULT(") {
-                val.rfind(')').map(|end| val[..end].to_string())
+            let upper = c.to_ascii_uppercase();
+            if upper.starts_with("DEFAULT ") || upper.starts_with("DEFAULT(") {
+                Some(strip_outer_parens(c["DEFAULT".len()..].trim()).to_string())
             } else {
                 None
             }
         });
-        let default_dv = default_val.as_ref().and_then(|v| {
-            storage_manager::executor::create_index::parse_string_to_value(&data_type, v).ok()
-        });
-
-        let check_expr = constraint_strs.iter().find_map(|c| {
-            let upper = c.to_uppercase();
-            if upper.starts_with("CHECK(") {
-                if let Some(end) = upper.rfind(')') {
-                    let expr = c["CHECK(".len()..end].to_string();
-                    Some(expr)
-                } else {
-                    None
+        let default_dv = match &default_val {
+            Some(v) if v.eq_ignore_ascii_case("NULL") => None,
+            Some(v) => {
+                match storage_manager::executor::create_index::parse_string_to_value(&data_type, v)
+                {
+                    Ok(dv) => Some(dv),
+                    Err(e) => {
+                        println!(
+                            "Invalid DEFAULT {} for column '{}' of type {}: {}",
+                            v, col.name, col.data_type, e
+                        );
+                        println!("Table '{}' was not created.", params.table);
+                        return Ok(());
+                    }
                 }
+            }
+            None => None,
+        };
+
+        // The parser renders a column constraint as `CHECK (expr)`.
+        let check_expr = constraint_strs.iter().find_map(|c| {
+            let upper = c.to_ascii_uppercase();
+            if upper.starts_with("CHECK (") || upper.starts_with("CHECK(") {
+                let start = c.find('(')?;
+                let end = c.rfind(')')?;
+                let expr = c.get(start + 1..end)?.trim();
+                (!expr.is_empty()).then(|| expr.to_string())
             } else {
                 None
             }
@@ -558,4 +584,15 @@ pub fn handle_create_index(
     }
 
     Ok(())
+}
+
+/// Strip redundant parentheses wrapping a whole expression: `('abc')` -> `'abc'`.
+pub fn strip_outer_parens(expr: &str) -> &str {
+    let mut expr = expr.trim();
+    while expr.starts_with('(')
+        && crate::handlers::helpers::find_matching_paren(expr) == Some(expr.len() - 1)
+    {
+        expr = expr[1..expr.len() - 1].trim();
+    }
+    expr
 }

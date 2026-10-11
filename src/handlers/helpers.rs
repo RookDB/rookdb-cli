@@ -117,7 +117,8 @@ pub fn save_table_constraint(db: &str, table: &str, definition: &str) {
     }
     // CHECK (expr)
     else if upper.starts_with("CHECK (") || upper.starts_with("CHECK(") {
-        let check_start = if upper.starts_with("CHECK(") { 6 } else { 7 };
+        // Offset of the opening paren: `find_matching_paren` needs it.
+        let check_start = if upper.starts_with("CHECK(") { 5 } else { 6 };
         let remaining = &definition[check_start..];
         if let Some(end) = find_matching_paren(remaining) {
             let expr = remaining[1..end].trim();

@@ -55,7 +55,7 @@ fn fk_references_resolve_with_original_letter_case() {
     // RESTRICT (default) blocks deleting a referenced parent row.
     let out = run(&ws, &["USE casetest;", "DELETE FROM Depts WHERE ID = 1;"]);
     assert!(
-        out.contains("Deleted 0 row(s)"),
+        out.contains("Delete failed") && out.contains("FOREIGN KEY"),
         "RESTRICT must prevent the delete:\n{}",
         out
     );
