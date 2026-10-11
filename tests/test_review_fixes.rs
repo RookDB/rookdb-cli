@@ -421,12 +421,10 @@ fn delete_blocked_by_a_foreign_key_changes_nothing() {
             // cascade into c1 must not have run.
             "DELETE FROM p;",
             "TRUNCATE TABLE p;",
-            "ALTER TABLE p RENAME TO p2;",
         ],
     );
     assert!(out.contains("Delete failed"), "{}", out);
     assert!(out.contains("Cannot truncate table 'p'"), "{}", out);
-    assert!(out.contains("Cannot rename table 'p'"), "{}", out);
     expect_rows(&ws, &["USE d;"], "SELECT COUNT(*) FROM p;", &[&["3"]]);
     expect_rows(&ws, &["USE d;"], "SELECT COUNT(*) FROM c1;", &[&["2"]]);
 
@@ -757,5 +755,40 @@ fn identifiers_are_case_insensitive() {
         &["USE d;"],
         "SELECT id, VAL FROM mixed ORDER BY ID;",
         &[&["2", "99"]],
+    );
+}
+
+#[test]
+fn renaming_a_table_carries_its_foreign_keys() {
+    let ws = Workspace::new("rf_renamefk");
+    run(
+        &ws,
+        &[
+            "CREATE DATABASE d;",
+            "USE d;",
+            "CREATE TABLE p (id INT PRIMARY KEY);",
+            "CREATE TABLE ch (id INT, pid INT REFERENCES p(id));",
+            "INSERT INTO p VALUES (1), (2);",
+            "INSERT INTO ch VALUES (1, 1);",
+            "ALTER TABLE p RENAME TO p2;",
+        ],
+    );
+    // A fresh session: the stored reference follows the rename.
+    let out = run(
+        &ws,
+        &[
+            "USE d;",
+            "INSERT INTO ch VALUES (2, 2);",
+            "INSERT INTO ch VALUES (3, 99);",
+            "DELETE FROM p2 WHERE id = 1;",
+        ],
+    );
+    assert!(out.contains("not found in parent table 'p2'"), "{}", out);
+    assert!(out.contains("Delete failed"), "{}", out);
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT id, pid FROM ch ORDER BY id;",
+        &[&["1", "1"], &["2", "2"]],
     );
 }

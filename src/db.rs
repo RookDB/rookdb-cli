@@ -341,17 +341,13 @@ pub fn execute_alter_table(
                 ));
             }
             let old_name = alter.table.clone();
-            // Foreign keys store the parent's name; renaming it would leave
-            // every child unable to insert. Refuse instead.
-            if let Some(child) = first_referencing_table(db, &old_name) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!(
-                        "Cannot rename table '{}': it is referenced by a foreign key on '{}'",
-                        old_name, child
-                    ),
-                ));
-            }
+            // Foreign keys store the parent's name: remember who references
+            // this table so those rows can follow the rename.
+            let referencing: Vec<String> =
+                storage_manager::backend::cache::referencing_fks(db, &old_name)
+                    .iter()
+                    .map(|fk| fk.0.clone())
+                    .collect();
             // Rename the heap file
             let old_dat = format!("database/base/{}/{}.dat", db, old_name);
             let new_dat = format!("database/base/{}/{}.dat", db, new_name);
@@ -374,6 +370,21 @@ pub fn execute_alter_table(
                     old_name, new_name, e
                 );
             }
+            // A self-referencing table is its own child under the new name.
+            let children: Vec<String> = referencing
+                .iter()
+                .map(|c| {
+                    if c.eq_ignore_ascii_case(&old_name) {
+                        new_name.clone()
+                    } else {
+                        c.clone()
+                    }
+                })
+                .collect();
+            storage_manager::backend::system_table::rename_referenced_table_in_constraints(
+                db, &children, &old_name, new_name,
+            )?;
+            storage_manager::backend::cache::invalidate_metadata();
             println!("Renamed table '{}' to '{}'.", old_name, new_name);
             return Ok(());
         }
