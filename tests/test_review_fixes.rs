@@ -543,3 +543,90 @@ fn order_by_prefers_a_select_alias_over_an_input_column() {
         &[&["2", "3"], &["2", "4"], &["1", "1"], &["1", "2"]],
     );
 }
+
+// ── Cross-type equality, casts, qualifiers ──────────────────────────────────
+
+#[test]
+fn equality_agrees_across_numeric_types_in_joins_and_set_operations() {
+    let ws = Workspace::new("rf_crosstype");
+    run(
+        &ws,
+        &[
+            "CREATE DATABASE d;",
+            "USE d;",
+            "CREATE TABLE a (id INT);",
+            "INSERT INTO a VALUES (1), (2), (3);",
+            "CREATE TABLE b (i BIGINT, f DOUBLE PRECISION, sm SMALLINT);",
+            "INSERT INTO b VALUES (1, 1.0, 1), (2, 2.0, 2), (9, 9.5, 9);",
+        ],
+    );
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT a.id, b.i FROM a JOIN b ON a.id = b.f ORDER BY 1;",
+        &[&["1", "1"], &["2", "2"]],
+    );
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT COUNT(*) FROM a LEFT JOIN b ON a.id = b.f;",
+        &[&["3"]],
+    );
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT id FROM a UNION SELECT i FROM b ORDER BY 1;",
+        &[&["1"], &["2"], &["3"], &["9"]],
+    );
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT id FROM a INTERSECT SELECT sm FROM b ORDER BY 1;",
+        &[&["1"], &["2"]],
+    );
+}
+
+#[test]
+fn temporal_and_rounding_casts() {
+    let ws = Workspace::new("rf_casts");
+    run(
+        &ws,
+        &[
+            "CREATE DATABASE d;",
+            "USE d;",
+            "CREATE TABLE one (id INT);",
+            "INSERT INTO one VALUES (1);",
+        ],
+    );
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT CAST(CAST('2024-01-02 03:04:05' AS TIMESTAMP) AS DATE), \
+         CAST(CAST('2024-01-02 03:04:05' AS TIMESTAMP) AS TIME), \
+         CAST(1.006 AS NUMERIC(5,2)) FROM one;",
+        &[&["2024-01-02", "03:04:05.000000", "1.01"]],
+    );
+    let out = run(
+        &ws,
+        &[
+            "USE d;",
+            "SELECT CAST(9223372036854775808.0 AS BIGINT) FROM one;",
+        ],
+    );
+    assert!(out.contains("out of range for BIGINT"), "{}", out);
+}
+
+#[test]
+fn unknown_table_qualifier_is_an_error() {
+    let ws = Workspace::new("rf_unknownqual");
+    run(&ws, JOIN_SETUP);
+    let out = run(&ws, &["USE d;", "SELECT zz.id FROM a;"]);
+    assert!(out.contains("Column 'zz.id' not found"), "{}", out);
+    // A real alias still resolves.
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT t.id FROM a t WHERE t.id = 1;",
+        &[&["1"]],
+    );
+}
