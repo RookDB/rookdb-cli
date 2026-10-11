@@ -21,13 +21,9 @@
 //!
 //! `exit` / `quit` (typed alone on a line) leave the shell.
 
-mod convert;
-mod db;
-mod handlers;
-
-use rook_ast::*;
 use rook_parser::parse_sql;
 use std::io::{self, IsTerminal, Write};
+use storage_manager::backend::session::Session;
 
 fn main() -> io::Result<()> {
     // Surface the engine's planner/executor decisions ([Volcano] …) and DML lifecycle.
@@ -131,15 +127,15 @@ fn main() -> io::Result<()> {
         println!("--------------------------------------\n");
     }
 
-    let mut catalog = db::initialize_catalog();
-    let mut current_db: Option<String> = None;
+    storage_manager::catalog::init_catalog();
+    let mut session = Session::new(storage_manager::catalog::load_catalog());
 
     // Accumulates input across lines until a terminator completes it.
     let mut pending = String::new();
 
     loop {
         if !is_piped {
-            let prompt = match current_db {
+            let prompt = match session.current_db {
                 Some(ref db) => format!("rookdb ({})> ", db),
                 None => "rookdb> ".to_string(),
             };
@@ -160,7 +156,7 @@ fn main() -> io::Result<()> {
                 if echo_sql {
                     print_sql_banner(stmt);
                 }
-                execute(stmt, &mut catalog, &mut current_db);
+                execute(stmt, &mut session);
             }
             break;
         }
@@ -191,7 +187,7 @@ fn main() -> io::Result<()> {
             if echo_sql {
                 print_sql_banner(&stmt);
             }
-            execute(&stmt, &mut catalog, &mut current_db);
+            execute(&stmt, &mut session);
             // Statement boundary: write the statement's pages to their files.
             // The fsync is shared by statements arriving within the sync
             // interval, so a script does not pay one per row.
@@ -231,72 +227,33 @@ fn print_sql_banner(sql: &str) {
     println!("\x1b[1;36m╚{}\x1b[0m", bottom_border);
 }
 
-/// Execute one SQL statement string, printing results or errors.
+/// Execute one SQL statement string, printing its results or error.
 ///
 /// Errors are printed rather than propagated so the REPL stays alive and
-/// tests can assert on messages via stdout/stderr.
-fn execute(
-    sql: &str,
-    catalog: &mut storage_manager::catalog::Catalog,
-    current_db: &mut Option<String>,
-) {
+/// tests can assert on messages via stdout.
+fn execute(sql: &str, session: &mut Session) {
     let sql = sql.trim();
     if sql.is_empty() || sql.starts_with("--") {
         return;
     }
-
-    match parse_sql(sql).map(|plan| resolve_table_names(plan, catalog, current_db)) {
-        Ok(plan) => match plan {
-            QueryPlan::ShowDatabases => handlers::dql::handle_show_databases(catalog, current_db),
-            QueryPlan::DropDatabase(ref p) => {
-                handlers::ddl::handle_drop_database(catalog, current_db, p)
-            }
-            QueryPlan::CreateDatabase(ref p) => {
-                handlers::ddl::handle_create_database(catalog, current_db, p)
-            }
-            QueryPlan::UseDatabase(ref name) => {
-                handlers::ddl::handle_use_database(catalog, current_db, name)
-            }
-            QueryPlan::ShowTables => handlers::dql::handle_show_tables(catalog, current_db),
-            QueryPlan::CreateTable(ref p) => {
-                handlers::ddl::handle_create_table(catalog, current_db, p)
-            }
-            QueryPlan::Insert(ref p) => handlers::dml::handle_insert(catalog, current_db, &plan, p),
-            QueryPlan::Select(_) => handlers::dql::handle_select(catalog, current_db, &plan),
-            QueryPlan::Update(ref p) => handlers::dml::handle_update(catalog, current_db, p),
-            QueryPlan::DropTable(ref p) => handlers::ddl::handle_drop_table(catalog, current_db, p),
-            QueryPlan::AlterTable(ref p) => {
-                handlers::ddl::handle_alter_table(catalog, current_db, p)
-            }
-            QueryPlan::CreateView(ref p) => {
-                handlers::ddl::handle_create_view(catalog, current_db, p)
-            }
-            QueryPlan::DropView(ref p) => handlers::ddl::handle_drop_view(catalog, current_db, p),
-            QueryPlan::Truncate(ref p) => handlers::ddl::handle_truncate(catalog, current_db, p),
-            QueryPlan::SetOperation(_) => {
-                handlers::dql::handle_set_operation(catalog, current_db, &plan)
-            }
-            QueryPlan::CreateTableAsSelect(ref p) => {
-                handlers::ddl::handle_create_table_as_select(catalog, current_db, p)
-            }
-            QueryPlan::DropIndex(ref p) => handlers::ddl::handle_drop_index(catalog, current_db, p),
-            QueryPlan::CreateIndex(ref p) => {
-                handlers::ddl::handle_create_index(catalog, current_db, p)
-            }
-            QueryPlan::Delete(ref p) => handlers::dml::handle_delete(catalog, current_db, p),
-            QueryPlan::Vacuum(ref p) => handlers::ddl::handle_vacuum(catalog, current_db, p),
-            QueryPlan::Unknown(ref msg) => {
-                println!("Unsupported SQL statement: {}", msg);
-                Ok(())
-            }
-        },
+    let plan = match parse_sql(sql) {
+        Ok(plan) => plan,
         Err(err) => {
             println!("Parse error: {}", err);
-            Ok(())
+            return;
         }
+    };
+    match session.execute(plan) {
+        Ok(result) => {
+            if let Some((schema, rows)) = &result.rows {
+                storage_manager::executor::physical::tuple::display_tuples(rows, schema);
+            }
+            for line in &result.messages {
+                println!("{}", line);
+            }
+        }
+        Err(e) => println!("{}", e),
     }
-    // Handler errors are surfaced without exiting so the REPL stays alive.
-    .unwrap_or_else(|e| eprintln!("Error: {}", e));
 }
 
 /// Split accumulated input into complete statements plus the trailing
@@ -359,38 +316,4 @@ fn split_complete_statements(buffer: &str) -> (Vec<String>, String) {
     // prompt does not hang on "-- pending".
     let remainder = current.trim().to_string();
     (statements, remainder)
-}
-
-/// Identifiers are case-insensitive: point each statement's target table at
-/// the spelling it was created with (`DELETE FROM T` reaches table `t`).
-/// SELECT sources are resolved the same way by the planner.
-fn resolve_table_names(
-    mut plan: QueryPlan,
-    catalog: &storage_manager::catalog::Catalog,
-    current_db: &Option<String>,
-) -> QueryPlan {
-    let Some(db) = current_db.as_ref().and_then(|d| catalog.databases.get(d)) else {
-        return plan;
-    };
-    let resolve = |name: &mut String| {
-        if !db.tables.contains_key(name.as_str()) {
-            let mut matches = db.tables.keys().filter(|t| t.eq_ignore_ascii_case(name));
-            if let (Some(stored), None) = (matches.next(), matches.next()) {
-                *name = stored.clone();
-            }
-        }
-    };
-    match &mut plan {
-        QueryPlan::Insert(p) => resolve(&mut p.table),
-        QueryPlan::Update(p) => resolve(&mut p.table),
-        QueryPlan::Delete(p) => resolve(&mut p.table),
-        QueryPlan::DropTable(p) => resolve(&mut p.table),
-        QueryPlan::Truncate(p) => resolve(&mut p.table),
-        QueryPlan::AlterTable(p) => resolve(&mut p.table),
-        QueryPlan::Vacuum(p) => resolve(&mut p.table),
-        QueryPlan::CreateIndex(p) => resolve(&mut p.table_name),
-        QueryPlan::DropIndex(p) => resolve(&mut p.table_name),
-        _ => {}
-    }
-    plan
 }
