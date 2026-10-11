@@ -666,6 +666,25 @@ fn a_row_the_index_rejects_is_not_inserted() {
         ],
     );
     assert!(out.contains("exceeds the maximum"), "{}", out);
+    // The same limit applies to UPDATE, before any row is rewritten.
+    let out = run_owned(
+        &ws,
+        &[
+            "USE d;".to_string(),
+            format!("UPDATE bk SET k = '{}' WHERE id = 1;", long_key),
+        ],
+    );
+    assert!(
+        out.contains("Update failed") && out.contains("exceeds the maximum"),
+        "{}",
+        out
+    );
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT id FROM bk WHERE k = 'short';",
+        &[&["1"]],
+    );
     // Heap scan and index scan agree: the rejected row is in neither.
     expect_rows(&ws, &["USE d;"], "SELECT id FROM bk;", &[&["1"]]);
     expect_rows(
