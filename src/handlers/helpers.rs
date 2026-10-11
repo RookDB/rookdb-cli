@@ -1,4 +1,4 @@
-use rook_ast::{ArithOp, BinaryOp, ComparisonOp, ConstantValue, ExprNode};
+use rook_ast::{ArithOp, ConstantValue, ExprNode};
 
 use crate::convert;
 
@@ -192,96 +192,5 @@ pub fn value_expr_to_string(expr: &ExprNode) -> String {
             format!("CASE {} END{}", parts.join(" "), else_part)
         }
         _ => format!("{:?}", expr), // fallback
-    }
-}
-
-/// Convert an `ExprNode` to a debug/display string for SET clause building.
-pub fn expr_to_debug_string(expr: &ExprNode) -> String {
-    match expr {
-        ExprNode::Column(name) => name.clone(),
-        ExprNode::Compound(parts) => parts.join("."),
-        ExprNode::Constant(cv) => match cv {
-            rook_ast::ConstantValue::Text(s) => format!("'{}'", s.replace('\'', "''")),
-            other => convert::constant_to_raw_string(other),
-        },
-        ExprNode::Binary { left, op, right } => {
-            let op_str = match op {
-                ArithOp::Add => "+",
-                ArithOp::Sub => "-",
-                ArithOp::Mul => "*",
-                ArithOp::Div => "/",
-            };
-            format!(
-                "{} {} {}",
-                expr_to_debug_string(left),
-                op_str,
-                expr_to_debug_string(right)
-            )
-        }
-        ExprNode::Cast { expr, data_type } => {
-            format!("CAST({} AS {})", expr_to_debug_string(expr), data_type)
-        }
-        ExprNode::Compare { left, op, right } => {
-            let op_str = match op {
-                ComparisonOp::Eq => "=",
-                ComparisonOp::Ne => "<>",
-                ComparisonOp::Lt => "<",
-                ComparisonOp::Le => "<=",
-                ComparisonOp::Gt => ">",
-                ComparisonOp::Ge => ">=",
-            };
-            format!(
-                "{} {} {}",
-                expr_to_debug_string(left),
-                op_str,
-                expr_to_debug_string(right)
-            )
-        }
-        ExprNode::Logical { left, op, right } => {
-            let op_str = match op {
-                BinaryOp::And => "AND",
-                BinaryOp::Or => "OR",
-            };
-            format!(
-                "{} {} {}",
-                expr_to_debug_string(left),
-                op_str,
-                expr_to_debug_string(right)
-            )
-        }
-        ExprNode::Not(inner) => format!("NOT {}", expr_to_debug_string(inner)),
-        ExprNode::IsNull(inner) => format!("{} IS NULL", expr_to_debug_string(inner)),
-        ExprNode::IsNotNull(inner) => format!("{} IS NOT NULL", expr_to_debug_string(inner)),
-        ExprNode::ScalarSubquery(_) => "(scalar subquery)".to_string(),
-        ExprNode::Function { name, args, .. } => {
-            let arg_strs: Vec<String> = args
-                .iter()
-                .map(|a| match a {
-                    rook_ast::FunctionArg::Star => "*".to_string(),
-                    rook_ast::FunctionArg::Expr(e) => expr_to_debug_string(e),
-                })
-                .collect();
-            format!("{}({})", name, arg_strs.join(", "))
-        }
-        ExprNode::Case {
-            when_then_pairs,
-            else_result,
-        } => {
-            let parts: Vec<String> = when_then_pairs
-                .iter()
-                .map(|(cond, res)| {
-                    format!(
-                        "WHEN {} THEN {}",
-                        expr_to_debug_string(cond),
-                        expr_to_debug_string(res)
-                    )
-                })
-                .collect();
-            let else_part = else_result
-                .as_ref()
-                .map(|e| format!(" ELSE {}", expr_to_debug_string(e)))
-                .unwrap_or_default();
-            format!("CASE {} END{}", parts.join(" "), else_part)
-        }
     }
 }

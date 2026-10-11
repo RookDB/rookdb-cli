@@ -418,10 +418,11 @@ fn bench_mutate(n: u64, tag: &str) {
     // Durability checkpoint before mutation phases.
     storage_manager::backend::cache::checkpoint();
 
+    use rook_parser::parse_set_clause;
     use storage_manager::backend::executor::row_select::{
         parse_where_text, select_matching_pointers,
     };
-    use storage_manager::executor::{delete_by_pointers, parse_set_clause, update_by_pointers};
+    use storage_manager::executor::{delete_by_pointers, update_by_pointers};
 
     // range UPDATE over half the keyspace
     eprintln!("  [mutate] setup done, parsing where...");

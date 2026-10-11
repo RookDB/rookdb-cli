@@ -6,8 +6,6 @@ use storage_manager::executor::delete_by_pointers;
 use storage_manager::executor::physical::execute_plan_collect;
 use storage_manager::executor::update_by_pointers;
 
-use crate::handlers::helpers::expr_to_debug_string;
-
 /// Handle INSERT (both VALUES and INSERT INTO ... SELECT)
 pub fn handle_insert(
     catalog: &mut Catalog,
@@ -112,22 +110,7 @@ pub fn handle_update(
         return Ok(());
     }
 
-    // Build parsed SET assignments from the AST
-    let set_str = upd
-        .assignments
-        .iter()
-        .map(|a| format!("{} = {}", a.column, expr_to_debug_string(&a.value)))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let assignments = match storage_manager::executor::parse_set_clause(&set_str) {
-        Some(a) => a,
-        None => {
-            println!("Could not parse SET clause.");
-            return Ok(());
-        }
-    };
-
-    match update_by_pointers(catalog, &db, &upd.table, &pointers, &assignments) {
+    match update_by_pointers(catalog, &db, &upd.table, &pointers, &upd.assignments) {
         Ok(result) => {
             println!("\nUpdated {} row(s).", result.updated_count);
         }
