@@ -630,3 +630,78 @@ fn unknown_table_qualifier_is_an_error() {
         &[&["1"]],
     );
 }
+
+// ── Statement-level consistency ─────────────────────────────────────────────
+
+#[test]
+fn insert_select_from_the_target_table_reads_a_fixed_snapshot() {
+    let ws = Workspace::new("rf_selfinsert");
+    let mut setup = vec![
+        "CREATE DATABASE d;".to_string(),
+        "USE d;".to_string(),
+        "CREATE TABLE i (id INT, k INT);".to_string(),
+    ];
+    setup.extend(numbered_rows("i", 200, 7));
+    // Seven doublings: 200 -> 25,600. The last one runs above the cache's
+    // 10,000-operation flush interval, where the scan used to pick up rows
+    // the same statement had just appended.
+    for _ in 0..7 {
+        setup.push("INSERT INTO i SELECT id, k FROM i;".to_string());
+    }
+    run_owned(&ws, &setup);
+    expect_rows(&ws, &["USE d;"], "SELECT COUNT(*) FROM i;", &[&["25600"]]);
+}
+
+#[test]
+fn a_row_the_index_rejects_is_not_inserted() {
+    let ws = Workspace::new("rf_idxreject");
+    let long_key = "z".repeat(3500);
+    let out = run_owned(
+        &ws,
+        &[
+            "CREATE DATABASE d;".to_string(),
+            "USE d;".to_string(),
+            "CREATE TABLE bk (id INT, k VARCHAR(4000));".to_string(),
+            "CREATE INDEX bk_k ON bk (k);".to_string(),
+            "INSERT INTO bk VALUES (1, 'short');".to_string(),
+            format!("INSERT INTO bk VALUES (2, '{}');", long_key),
+        ],
+    );
+    assert!(out.contains("exceeds the maximum"), "{}", out);
+    // Heap scan and index scan agree: the rejected row is in neither.
+    expect_rows(&ws, &["USE d;"], "SELECT id FROM bk;", &[&["1"]]);
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT COUNT(*) FROM bk WHERE k >= 'a';",
+        &[&["1"]],
+    );
+}
+
+#[test]
+fn cascade_delete_respects_a_restricting_grandchild() {
+    let ws = Workspace::new("rf_grandchild");
+    let out = run(
+        &ws,
+        &[
+            "CREATE DATABASE d;",
+            "USE d;",
+            "CREATE TABLE p (id INT PRIMARY KEY);",
+            "CREATE TABLE c1 (id INT PRIMARY KEY, pid INT, \
+                 FOREIGN KEY (pid) REFERENCES p(id) ON DELETE CASCADE);",
+            "CREATE TABLE gr (id INT, cid INT REFERENCES c1(id));",
+            "INSERT INTO p VALUES (1), (2);",
+            "INSERT INTO c1 VALUES (13, 1), (14, 2);",
+            "INSERT INTO gr VALUES (40, 13);",
+            // Cascading into c1 row 13 would orphan gr row 40.
+            "DELETE FROM p WHERE id = 1;",
+        ],
+    );
+    assert!(out.contains("Delete failed"), "{}", out);
+    expect_rows(&ws, &["USE d;"], "SELECT COUNT(*) FROM p;", &[&["2"]]);
+    expect_rows(&ws, &["USE d;"], "SELECT COUNT(*) FROM c1;", &[&["2"]]);
+
+    // The unrestricted branch still cascades.
+    run(&ws, &["USE d;", "DELETE FROM p WHERE id = 2;"]);
+    expect_rows(&ws, &["USE d;"], "SELECT id FROM c1;", &[&["13"]]);
+}
