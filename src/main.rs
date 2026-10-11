@@ -57,9 +57,9 @@ fn main() -> io::Result<()> {
         }
 
         // Format clean Volcano and DML lifecycle debug output with colors and tags
-        if msg.starts_with("[Volcano] Using HashJoin") {
-            writeln!(buf, "  \x1b[1;35m[JOIN]\x1b[0m       {}", msg.trim_start_matches("[Volcano] "))
-        } else if msg.starts_with("[Volcano] Using IndexNestedLoopJoin") {
+        if msg.starts_with("[Volcano] Using HashJoin")
+            || msg.starts_with("[Volcano] Using IndexNestedLoopJoin")
+        {
             writeln!(buf, "  \x1b[1;35m[JOIN]\x1b[0m       {}", msg.trim_start_matches("[Volcano] "))
         } else if msg.starts_with("[Volcano] Index-accelerated scan:") {
             writeln!(buf, "  \x1b[1;32m[INDEX SCAN]\x1b[0m {}", msg.trim_start_matches("[Volcano] "))

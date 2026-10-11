@@ -174,10 +174,10 @@ pub fn parse_tables(output: &str) -> Vec<QueryTable> {
                 }
                 if t.rows.is_empty() && t.columns.is_empty() {
                     // header line: cells are "name: TYPE" (leading row# cell without ':' is skipped)
-                    let header_cells = if cells.first().map_or(false, |c| !c.contains(':')) {
+                    let header_cells = if cells.first().is_some_and(|c| !c.contains(':')) {
                         &cells[1..]
                     } else {
-                        &cells[..]
+                        cells
                     };
                     for c in header_cells {
                         let name = c.rsplit_once(": ").map(|(n, _)| n).unwrap_or(c).to_string();
