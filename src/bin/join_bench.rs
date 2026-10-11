@@ -1,14 +1,20 @@
-//! Hash-join timings for the architecture review (F2/F3).
+//! Join timings for the architecture review (F2/F3, F4).
 //!
 //! Build & run (from the rookdb-cli directory):
 //!   cargo build --release --bin join_bench
 //!   ./target/release/join_bench [rows] [repeats]
+//!   ./target/release/join_bench chain [repeats]
 //!
 //! Builds `a(id INT, k INT, name VARCHAR(20))` and `b` with `rows` rows each
 //! (default 5,000; `b.id` holds the even numbers, so half of `a` finds a
 //! partner) in a fresh directory under the system temp dir, then runs each
 //! join `repeats` times (default 7) and prints the fastest and the median
 //! wall time. Set `ROOK_HASH_JOIN_BUDGET_BYTES` to time the spill path.
+//!
+//! `chain` times join ordering instead: `big` (100,000 rows), `mid`
+//! (10,000) and `small` (100), each `big` row naming a `mid` and each `mid`
+//! a `small`, joined in a chain written big first, with and without a
+//! filter on `small`.
 
 use std::time::Instant;
 
@@ -46,6 +52,29 @@ const QUERIES: &[(&str, &str)] = &[
     ),
 ];
 
+const CHAIN_QUERIES: &[(&str, &str)] = &[
+    (
+        "chain3",
+        "SELECT big.id, mid.w, small.id FROM big JOIN mid ON big.mid_id = mid.id          JOIN small ON mid.small_id = small.id WHERE small.x = 7",
+    ),
+    (
+        "chain3_count",
+        "SELECT COUNT(*) FROM big JOIN mid ON big.mid_id = mid.id          JOIN small ON mid.small_id = small.id WHERE small.x = 7",
+    ),
+    (
+        "chain3_midfirst",
+        "SELECT big.id, mid.w, small.id FROM mid JOIN big ON big.mid_id = mid.id          JOIN small ON mid.small_id = small.id WHERE small.x = 7",
+    ),
+    (
+        "chain3_nofilt",
+        "SELECT COUNT(*) FROM big JOIN mid ON big.mid_id = mid.id          JOIN small ON mid.small_id = small.id",
+    ),
+    (
+        "chain3_agg",
+        "SELECT small.x, COUNT(*) FROM big JOIN mid ON big.mid_id = mid.id          JOIN small ON mid.small_id = small.id WHERE small.x < 3 GROUP BY small.x",
+    ),
+];
+
 fn run(session: &mut Session, sql: &str) -> usize {
     let plan = rook_parser::parse_sql(sql).unwrap_or_else(|e| panic!("{}: {}", sql, e));
     let result = session
@@ -70,10 +99,58 @@ fn load(session: &mut Session, table: &str, rows: usize, id_step: usize) {
     }
 }
 
+/// Create `table` from `ddl` and fill it with `rows` rows, the `i`th
+/// given by `row(i)`.
+fn load_rows(
+    session: &mut Session,
+    table: &str,
+    ddl: &str,
+    rows: usize,
+    row: impl Fn(usize) -> String,
+) {
+    run(session, &format!("CREATE TABLE {} ({})", table, ddl));
+    for start in (0..rows).step_by(500) {
+        let values: Vec<String> = (start..(start + 500).min(rows)).map(&row).collect();
+        run(
+            session,
+            &format!("INSERT INTO {} VALUES {}", table, values.join(", ")),
+        );
+    }
+}
+
+/// Run each query `repeats` times after a warm-up and print its timings.
+fn time_queries(session: &mut Session, queries: &[(&str, &str)], repeats: usize) {
+    for (name, sql) in queries {
+        run(session, sql); // warm the caches
+        let mut times: Vec<f64> = (0..repeats)
+            .map(|_| {
+                let t = Instant::now();
+                run(session, sql);
+                t.elapsed().as_secs_f64() * 1000.0
+            })
+            .collect();
+        times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let n = run(session, sql);
+        println!(
+            "[RESULT] {:<15} min {:>8.2} ms  median {:>8.2} ms  ({} rows)  {}",
+            name,
+            times[0],
+            times[times.len() / 2],
+            n,
+            sql
+        );
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let rows: usize = args.get(1).and_then(|a| a.parse().ok()).unwrap_or(5_000);
-    let repeats: usize = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(7);
+    let chain = args.get(1).is_some_and(|a| a == "chain");
+    let arg = |i: usize| args.get(i).and_then(|a| a.parse().ok());
+    let (rows, repeats): (usize, usize) = if chain {
+        (0, arg(2).unwrap_or(7))
+    } else {
+        (arg(1).unwrap_or(5_000), arg(2).unwrap_or(7))
+    };
 
     storage_manager::backend::executor::row_select::register_where_parser(
         rook_parser::parse_where_text,
@@ -89,29 +166,23 @@ fn main() {
 
     run(&mut s, "CREATE DATABASE bench");
     run(&mut s, "USE bench");
-    load(&mut s, "a", rows, 1);
-    load(&mut s, "b", rows, 2);
-    storage_manager::backend::cache::checkpoint_durable();
-
-    for (name, sql) in QUERIES {
-        run(&mut s, sql); // warm the caches
-        let mut times: Vec<f64> = (0..repeats)
-            .map(|_| {
-                let t = Instant::now();
-                run(&mut s, sql);
-                t.elapsed().as_secs_f64() * 1000.0
-            })
-            .collect();
-        times.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let n = run(&mut s, sql);
-        println!(
-            "[RESULT] {:<12} min {:>8.2} ms  median {:>8.2} ms  ({} rows)  {}",
-            name,
-            times[0],
-            times[times.len() / 2],
-            n,
-            sql
-        );
+    if chain {
+        load_rows(&mut s, "big", "id INT, mid_id INT, v INT", 100_000, |i| {
+            format!("({}, {}, {})", i, i % 10_000, i % 97)
+        });
+        load_rows(&mut s, "mid", "id INT, small_id INT, w INT", 10_000, |i| {
+            format!("({}, {}, {})", i, i % 100, i % 13)
+        });
+        load_rows(&mut s, "small", "id INT, x INT", 100, |i| {
+            format!("({}, {})", i, i % 50)
+        });
+        storage_manager::backend::cache::checkpoint_durable();
+        time_queries(&mut s, CHAIN_QUERIES, repeats);
+    } else {
+        load(&mut s, "a", rows, 1);
+        load(&mut s, "b", rows, 2);
+        storage_manager::backend::cache::checkpoint_durable();
+        time_queries(&mut s, QUERIES, repeats);
     }
 
     drop(s);
