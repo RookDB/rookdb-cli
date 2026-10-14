@@ -23,6 +23,10 @@ path = "src/bin/stress_bench.rs"
 name = "query_bench"
 path = "src/bin/query_bench.rs"
 
+[[bin]]
+name = "btree_bench"
+path = "src/bin/btree_bench.rs"
+
 [dependencies]
 rook-ast = { path = "../rook-ast" }
 rook-parser = { path = "../rook-parser" }
