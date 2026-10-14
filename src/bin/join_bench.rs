@@ -176,11 +176,6 @@ fn main() {
         (arg(1).unwrap_or(5_000), arg(2).unwrap_or(7))
     };
 
-    storage_manager::backend::executor::row_select::register_where_parser(
-        rook_parser::parse_where_text,
-    );
-    storage_manager::backend::cache::register_check_parser(rook_parser::parse_check_expr);
-
     let root = std::env::temp_dir().join(format!("rookdb_join_bench_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();

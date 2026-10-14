@@ -30,11 +30,6 @@ fn main() {
     let tables: usize = args.get(1).and_then(|a| a.parse().ok()).unwrap_or(60);
     let rows: usize = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(40_000);
 
-    storage_manager::backend::executor::row_select::register_where_parser(
-        rook_parser::parse_where_text,
-    );
-    storage_manager::backend::cache::register_check_parser(rook_parser::parse_check_expr);
-
     let root = std::env::temp_dir().join(format!("rookdb_pool_bench_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();

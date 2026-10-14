@@ -589,6 +589,7 @@ dependencies = [
  "log",
  "regex",
  "rook-ast",
+ "rook-parser",
  "serde",
  "serde_json",
  "sqlparser",

@@ -131,11 +131,6 @@ fn run(session: &mut Session, sql: &str) -> usize {
 
 /// The same shapes through the SQL layer, where the index is one cost of many.
 fn bench_sql(rows: usize, repeats: usize) {
-    storage_manager::backend::executor::row_select::register_where_parser(
-        rook_parser::parse_where_text,
-    );
-    storage_manager::backend::cache::register_check_parser(rook_parser::parse_check_expr);
-
     let root = std::env::temp_dir().join(format!("rookdb_btree_bench_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();

@@ -156,11 +156,6 @@ fn main() {
         .and_then(|a| a.parse().ok())
         .unwrap_or(3);
 
-    storage_manager::backend::executor::row_select::register_where_parser(
-        rook_parser::parse_where_text,
-    );
-    storage_manager::backend::cache::register_check_parser(rook_parser::parse_check_expr);
-
     report("insert", (0..repeats).map(|_| bench_insert()).collect());
     report(
         "cascade",

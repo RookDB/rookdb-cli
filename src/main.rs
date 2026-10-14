@@ -68,11 +68,6 @@ fn main() -> io::Result<()> {
             writeln!(buf, "  {} {}", tag, record.args())
         })
         .init();
-    storage_manager::backend::executor::row_select::register_where_parser(
-        rook_parser::parse_where_text,
-    );
-    storage_manager::backend::cache::register_check_parser(rook_parser::parse_check_expr);
-    storage_manager::backend::planner::plan_cache::register_sql_parser(rook_parser::parse_sql);
 
     let is_piped = !io::stdin().is_terminal();
     let echo_sql = flag(&["--echo", "-e"])
