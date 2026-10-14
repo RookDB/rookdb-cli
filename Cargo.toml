@@ -42,3 +42,7 @@ libc = "0.2"
 [[bin]]
 name = "join_bench"
 path = "src/bin/join_bench.rs"
+
+[[bin]]
+name = "constraint_bench"
+path = "src/bin/constraint_bench.rs"
