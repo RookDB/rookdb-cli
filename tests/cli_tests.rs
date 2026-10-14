@@ -139,10 +139,9 @@ fn ensure_suite_init() {
 /// Creates:
 ///   database_test_{N}/system/    — system catalog heap files
 ///   database_test_{N}/base/      — user database data files
-///   database_test_{N}/global/    — legacy catalog.json location
 ///
 /// Then runs a warm-up CLI session (`SELECT 1`) to force system table
-/// initialization (bootstrap_system_catalog + create_system_table_files).
+/// initialization (init_catalog + create_system_table_files).
 ///
 /// Workspaces from a PREVIOUS test run (that crashed without cleanup) are
 /// cleaned at suite init.
