@@ -21,6 +21,11 @@ const QUERIES: &[(&str, &str)] = &[
     ("count", "SELECT COUNT(*) FROM t"),
     ("sum", "SELECT SUM(k) FROM t"),
     ("group_by", "SELECT k, COUNT(*) FROM t GROUP BY k"),
+    (
+        "group_by_aggs",
+        "SELECT k, COUNT(*), SUM(id), MIN(name) FROM t GROUP BY k",
+    ),
+    ("group_by_uniq", "SELECT id, COUNT(*) FROM t GROUP BY id"),
     ("order_limit", "SELECT name FROM t ORDER BY name LIMIT 5"),
     ("order_all", "SELECT * FROM t ORDER BY name"),
     ("order_name_only", "SELECT name FROM t ORDER BY name"),

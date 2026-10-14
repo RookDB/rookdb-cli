@@ -1,4 +1,4 @@
-//! Join timings for the architecture review (F2/F3, F4).
+//! Join timings for the architecture review (F2/F3, F4, G17).
 //!
 //! Build & run (from the rookdb-cli directory):
 //!   cargo build --release --bin join_bench
@@ -50,6 +50,29 @@ const QUERIES: &[(&str, &str)] = &[
     (
         "full",
         "SELECT a.id, b.name FROM a FULL JOIN b ON a.id = b.id",
+    ),
+    // Nested-loop joins (G17): no equality to hash on.
+    (
+        "nl_lt_limit",
+        "SELECT a.id, b.id FROM a JOIN b ON a.k < b.k LIMIT 10",
+    ),
+    (
+        "nl_left_limit",
+        "SELECT a.id, b.id FROM a LEFT JOIN b ON a.k < b.k LIMIT 10",
+    ),
+    ("nl_lt_count", "SELECT COUNT(*) FROM a JOIN b ON a.k < b.k"),
+    (
+        "nl_full_count",
+        "SELECT COUNT(*) FROM a FULL JOIN b ON a.k < b.k AND a.id > b.id",
+    ),
+    (
+        "cross_limit",
+        "SELECT a.id, b.id FROM a CROSS JOIN b LIMIT 10",
+    ),
+    ("cross_count", "SELECT COUNT(*) FROM a CROSS JOIN b"),
+    (
+        "derived_left",
+        "SELECT x.id, x.c, b.name FROM (SELECT id, COUNT(*) c FROM a GROUP BY id) x LEFT JOIN b ON x.id = b.id",
     ),
 ];
 
