@@ -380,8 +380,8 @@ fn explain_prints_the_plan_tree() {
     assert!(
         out.contains(
             "
-  Limit (limit=1, est_rows=1)
-    Sort ("
+  Sort (keys=dname DESC, top_n=1, est_rows=1)
+    SeqScan (table=dept"
         ),
         "{}",
         out
