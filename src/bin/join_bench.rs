@@ -14,7 +14,8 @@
 //! `chain` times join ordering instead: `big` (100,000 rows), `mid`
 //! (10,000) and `small` (100), each `big` row naming a `mid` and each `mid`
 //! a `small`, joined in a chain written big first, with and without a
-//! filter on `small`.
+//! filter on `small`. Set `ROOK_KEEP_JOIN_ORDER=1` to time the chain in the
+//! order written, without join reordering.
 
 use std::time::Instant;
 
@@ -161,6 +162,7 @@ fn main() {
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let engine = Engine::open(&root);
+    engine.set_keep_join_order(std::env::var_os("ROOK_KEEP_JOIN_ORDER").is_some());
     init_catalog_in(&engine);
     let mut s = Session::new(load_catalog_in(&engine));
 
