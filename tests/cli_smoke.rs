@@ -350,6 +350,11 @@ const EMP: &[&str] = &[
 fn explain_prints_the_plan_tree() {
     let ws = Workspace::new("explain");
     let mut lines = EMP.to_vec();
+    // Probing an index beats a hash join only once the tables are big enough
+    // for the scan to cost something, so pad emp with rows in no department.
+    let padding: Vec<String> = (1000..1300).map(|i| format!("({}, 'x{}', 99)", i, i)).collect();
+    let insert = format!("INSERT INTO emp VALUES {};", padding.join(", "));
+    lines.push(&insert);
     lines.push("EXPLAIN SELECT name FROM emp WHERE dept = 2;");
     lines.push("EXPLAIN SELECT d.dname, e.name FROM dept d JOIN emp e ON d.dno = e.dept;");
     lines.push("EXPLAIN SELECT * FROM dept ORDER BY dname DESC LIMIT 1;");
@@ -368,12 +373,12 @@ fn explain_prints_the_plan_tree() {
         "{}",
         out
     );
-    assert!(out.contains("Sort (keys=dname DESC, top_n=1)"), "{}", out);
+    assert!(out.contains("Sort (keys=dname DESC, top_n=1"), "{}", out);
     // Inputs are indented under the operator that reads them.
     assert!(
         out.contains(
             "
-  Limit (limit=1)
+  Limit (limit=1, est_rows=1)
     Sort ("
         ),
         "{}",
