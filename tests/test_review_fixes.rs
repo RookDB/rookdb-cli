@@ -1107,3 +1107,144 @@ fn select_list_subquery_binds_the_qualified_outer_column() {
         &[&["1", "2"], &["2", "1"]],
     );
 }
+
+// ── Correlated subqueries: the whole subquery runs, not one table's scan ────
+
+#[test]
+fn correlated_in_compares_the_subquerys_select_list() {
+    let ws = Workspace::new("rf_corr_in_select");
+    run(&ws, SCOPE_SETUP);
+    // z is not b's first column; b.x = a.x picks one b row per a row.
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT x FROM a WHERE y IN (SELECT z FROM b WHERE b.x = a.x) ORDER BY x;",
+        &[&["1"], &["3"]],
+    );
+    // max(z) over b.x <= a.x is 10 / 99 / 99.
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT x FROM a WHERE y IN (SELECT max(z) FROM b WHERE b.x <= a.x) ORDER BY x;",
+        &[&["1"]],
+    );
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT x FROM a WHERE y IN \
+         (SELECT z FROM b WHERE b.x <= a.x ORDER BY z LIMIT 1) ORDER BY x;",
+        &[&["1"]],
+    );
+}
+
+#[test]
+fn correlated_subquery_with_a_join_sees_every_table() {
+    let ws = Workspace::new("rf_corr_join");
+    run(&ws, SCOPE_SETUP);
+    run(
+        &ws,
+        &[
+            "USE d;",
+            "CREATE TABLE c (k INT);",
+            "INSERT INTO c VALUES (10), (30);",
+        ],
+    );
+    for sql in [
+        "SELECT x FROM a WHERE EXISTS \
+         (SELECT 1 FROM b JOIN c ON b.z = c.k WHERE b.x = a.x) ORDER BY x;",
+        "SELECT x FROM a WHERE EXISTS \
+         (SELECT 1 FROM b, c WHERE b.z = c.k AND b.x = a.x) ORDER BY x;",
+        "SELECT x FROM a WHERE y IN \
+         (SELECT c.k FROM b JOIN c ON b.z = c.k WHERE b.x = a.x) ORDER BY x;",
+    ] {
+        expect_rows(&ws, &["USE d;"], sql, &[&["1"], &["3"]]);
+    }
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT x, (SELECT count(*) FROM b JOIN c ON b.z = c.k WHERE b.x = a.x) \
+         FROM a ORDER BY x;",
+        &[&["1", "1"], &["2", "0"], &["3", "1"]],
+    );
+}
+
+#[test]
+fn outer_reference_inside_an_expression_is_correlated() {
+    let ws = Workspace::new("rf_corr_expr");
+    run(&ws, SCOPE_SETUP);
+    for pred in [
+        "b.z = y + 0",
+        "y = b.z",
+        "b.z BETWEEN y AND y",
+        "b.z IN (y)",
+    ] {
+        expect_rows(
+            &ws,
+            &["USE d;"],
+            &format!("SELECT x FROM a WHERE x IN (SELECT b.x FROM b WHERE {pred}) ORDER BY x;"),
+            &[&["1"], &["3"]],
+        );
+    }
+}
+
+#[test]
+fn correlated_subquery_keeps_its_other_filters_and_outer_types() {
+    let ws = Workspace::new("rf_corr_filters");
+    run(&ws, SCOPE_SETUP);
+    // b.z > 15 must still apply next to the correlation: b(1,10) fails it.
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT x FROM a WHERE EXISTS (SELECT 1 FROM b WHERE b.x = a.x AND b.z > 15) ORDER BY x;",
+        &[&["2"], &["3"]],
+    );
+    // Outer VARCHAR and DATE values are bound with their types.
+    run(
+        &ws,
+        &[
+            "USE d;",
+            "CREATE TABLE p (n VARCHAR(10), d DATE);",
+            "CREATE TABLE q (n VARCHAR(10), d DATE, v INT);",
+            "INSERT INTO p VALUES ('u', '2024-01-02'), ('w', '2024-03-04');",
+            "INSERT INTO q VALUES ('u', '2024-01-02', 7), ('w', '2024-01-02', 8);",
+        ],
+    );
+    // Simple shape (bound as a parameter) and general shape (outer value in an
+    // expression, bound as a typed constant) agree: only ('u', 2024-01-02) matches v = 7.
+    for sql in [
+        "SELECT n FROM p WHERE 7 IN (SELECT v FROM q WHERE q.n = p.n AND q.d = p.d);",
+        "SELECT n FROM p WHERE 7 IN (SELECT v + 0 FROM q WHERE q.n = p.n AND q.d = p.d + 0);",
+    ] {
+        expect_rows(&ws, &["USE d;"], sql, &[&["'u'"]]);
+    }
+}
+
+#[test]
+fn correlated_not_in_keeps_three_valued_logic() {
+    let ws = Workspace::new("rf_corr_not_in_null");
+    run(
+        &ws,
+        &[
+            "CREATE DATABASE d;",
+            "USE d;",
+            "CREATE TABLE a (x INT, y INT);",
+            "CREATE TABLE b (x INT, z INT);",
+            "INSERT INTO a VALUES (1, 10), (2, 20), (3, 30), (4, NULL);",
+            "INSERT INTO b VALUES (1, NULL), (2, 5), (3, 30), (4, 7);",
+        ],
+    );
+    // a1: {NULL} -> UNKNOWN; a2: {5} -> true; a3: {30} -> false; a4: NULL lhs, {7} -> UNKNOWN.
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT x FROM a WHERE y NOT IN (SELECT z FROM b WHERE b.x = a.x) ORDER BY x;",
+        &[&["2"]],
+    );
+    // NULL lhs against an empty set: IN is false, NOT IN is true.
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT x FROM a WHERE y NOT IN (SELECT z FROM b WHERE b.x = a.x + 100) ORDER BY x;",
+        &[&["1"], &["2"], &["3"], &["4"]],
+    );
+}
