@@ -880,3 +880,70 @@ fn sum_header_names_the_type_of_the_value_below_it() {
         &[&["9223372036854775807"]],
     );
 }
+
+// ── D2: a bare column two joined tables share is ambiguous ──────────────────
+
+#[test]
+fn ambiguous_bare_column_in_a_join_is_an_error() {
+    let ws = Workspace::new("rf_ambiguous");
+    run(
+        &ws,
+        &[
+            "CREATE DATABASE d;",
+            "USE d;",
+            "CREATE TABLE l (id INT, k INT);",
+            "CREATE TABLE r (id INT, k INT);",
+            "INSERT INTO l VALUES (1, 10);",
+            "INSERT INTO r VALUES (7, 10);",
+        ],
+    );
+    let out = run(&ws, &["USE d;", "SELECT id FROM l JOIN r ON l.k = r.k;"]);
+    assert!(
+        out.contains("Column reference 'id' is ambiguous"),
+        "{}",
+        out
+    );
+    // Qualified names and USING's merged column still work.
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT l.id, r.id, k FROM l JOIN r USING (k);",
+        &[&["1", "7", "10"]],
+    );
+}
+
+// ── D10: quoted identifiers keep their spelling ─────────────────────────────
+
+#[test]
+fn quoted_column_names_work_end_to_end() {
+    let ws = Workspace::new("rf_quoted");
+    run(
+        &ws,
+        &[
+            "CREATE DATABASE d;",
+            "USE d;",
+            "CREATE TABLE Mixed (\"my col\" INT, \"Total\" INT);",
+            "INSERT INTO Mixed VALUES (3, 30);",
+            "INSERT INTO Mixed (\"Total\", \"my col\") VALUES (10, 1);",
+        ],
+    );
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT \"my col\" FROM Mixed WHERE \"Total\" > 5 ORDER BY \"my col\";",
+        &[&["1"], &["3"]],
+    );
+    run(
+        &ws,
+        &[
+            "USE d;",
+            "UPDATE Mixed SET \"my col\" = 9 WHERE \"Total\" = 10;",
+        ],
+    );
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT \"my col\" FROM Mixed ORDER BY 1;",
+        &[&["3"], &["9"]],
+    );
+}
