@@ -55,7 +55,7 @@ impl Ws {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("base")).expect("ws create");
         std::env::set_current_dir(&dir).expect("chdir");
-        init_catalog();
+        init_catalog().expect("init catalog");
         Ws(dir)
     }
 }

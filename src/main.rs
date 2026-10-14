@@ -80,7 +80,10 @@ fn main() -> io::Result<()> {
         println!("--------------------------------------\n");
     }
 
-    storage_manager::catalog::init_catalog();
+    if let Err(e) = storage_manager::catalog::init_catalog() {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    }
     let catalog = storage_manager::catalog::load_catalog();
     // `--log-operations`: UPDATE, DELETE and compaction append a JSON line
     // per statement under database/logs/ (off by default).

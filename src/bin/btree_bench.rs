@@ -135,7 +135,7 @@ fn bench_sql(rows: usize, repeats: usize) {
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let engine = Engine::open(&root);
-    init_catalog_in(&engine);
+    init_catalog_in(&engine).expect("init catalog");
     let mut s = Session::new(load_catalog_in(&engine));
 
     run(&mut s, "CREATE DATABASE bench");

@@ -181,7 +181,7 @@ fn main() {
     std::fs::create_dir_all(&root).unwrap();
     let engine = Engine::open(&root);
     engine.set_keep_join_order(std::env::var_os("ROOK_KEEP_JOIN_ORDER").is_some());
-    init_catalog_in(&engine);
+    init_catalog_in(&engine).expect("init catalog");
     let mut s = Session::new(load_catalog_in(&engine));
 
     run(&mut s, "CREATE DATABASE bench");
