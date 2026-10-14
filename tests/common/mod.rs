@@ -52,10 +52,18 @@ impl AsRef<std::path::Path> for Workspace {
 /// Spawn a fresh CLI session inside `ws` and feed it SQL lines.
 /// Returns combined stdout + stderr.
 pub fn run(ws: &Workspace, sql_lines: &[&str]) -> String {
+    run_with_args(ws, &[], sql_lines)
+}
+
+/// [`run`] with command-line flags. `RUST_LOG` is cleared so the output
+/// does not depend on the caller's environment.
+pub fn run_with_args(ws: &Workspace, args: &[&str], sql_lines: &[&str]) -> String {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_rookdb"))
+        .args(args)
+        .env_remove("RUST_LOG")
         .current_dir(ws.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

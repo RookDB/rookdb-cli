@@ -12,7 +12,7 @@
 
 mod common;
 
-use common::{Workspace, expect_rows, run};
+use common::{Workspace, expect_rows, run, run_with_args};
 
 /// items(id, name, price) with three rows.
 const SETUP: &[&str] = &[
@@ -330,4 +330,130 @@ fn session_survives_errors() {
     // The final valid statement still executes after two failures.
     let table = common::parse_last_table(&out);
     assert_eq!(table.rows, vec![vec!["1"]], "output:\n{}", out);
+}
+
+// ── EXPLAIN and engine logging (S10) ─────────────────────────────────────────
+
+const EMP: &[&str] = &[
+    "CREATE DATABASE hr;",
+    "USE hr;",
+    "CREATE TABLE emp (id INT PRIMARY KEY, name VARCHAR(20), dept INT);",
+    "CREATE TABLE dept (dno INT, dname VARCHAR(20));",
+    "INSERT INTO emp VALUES (1, 'ann', 1), (2, 'bob', 2), (3, 'cy', 1);",
+    "INSERT INTO dept VALUES (1, 'eng'), (2, 'ops');",
+    "CREATE INDEX emp_dept_idx ON emp (dept);",
+];
+
+/// EXPLAIN prints the physical plan as an indented operator tree, with the
+/// decisions the shell used to scrape from the engine log.
+#[test]
+fn explain_prints_the_plan_tree() {
+    let ws = Workspace::new("explain");
+    let mut lines = EMP.to_vec();
+    lines.push("EXPLAIN SELECT name FROM emp WHERE dept = 2;");
+    lines.push("EXPLAIN SELECT d.dname, e.name FROM dept d JOIN emp e ON d.dno = e.dept;");
+    lines.push("EXPLAIN SELECT * FROM dept ORDER BY dname DESC LIMIT 1;");
+    let out = run(&ws, &lines);
+    assert!(
+        out.contains(
+            "IndexScan (table=emp, index=emp_dept_idx, key_columns=dept, mode=Point, key=2)"
+        ),
+        "{}",
+        out
+    );
+    assert!(
+        out.lines().any(|l| l
+            .trim_start()
+            .starts_with("IndexNestedLoopJoin (type=Inner, inner_table=emp, index=emp_dept_idx")),
+        "{}",
+        out
+    );
+    assert!(out.contains("Sort (keys=dname DESC, top_n=1)"), "{}", out);
+    // Inputs are indented under the operator that reads them.
+    assert!(
+        out.contains(
+            "
+  Limit (limit=1)
+    Sort ("
+        ),
+        "{}",
+        out
+    );
+}
+
+/// By default the shell prints results and messages only: no engine log
+/// lines, whatever the statement did. `--engine-log` brings them back.
+#[test]
+fn engine_log_is_off_unless_asked_for() {
+    let ws = Workspace::new("quiet");
+    let mut lines = EMP.to_vec();
+    lines.push("SELECT d.dname, e.name FROM dept d JOIN emp e ON d.dno = e.dept;");
+    lines.push("UPDATE emp SET name = 'al' WHERE id = 1;");
+    lines.push("DELETE FROM emp WHERE id = 3;");
+    let out = run(&ws, &lines);
+    for tag in [
+        "[INFO]",
+        "[DEBUG]",
+        "[JOIN]",
+        "[INDEX SCAN]",
+        "[DML:",
+        "[PLANNER]",
+    ] {
+        assert!(
+            !out.contains(tag),
+            "unexpected {} in:
+{}",
+            tag,
+            out
+        );
+    }
+    assert!(out.contains("Updated 1 row(s)."), "{}", out);
+    assert!(out.contains("Deleted 1 row(s)."), "{}", out);
+
+    let ws = Workspace::new("verbose");
+    let mut lines = EMP.to_vec();
+    lines.push("DELETE FROM emp WHERE id = 3;");
+    let out = run_with_args(&ws, &["--engine-log"], &lines);
+    // One summary per statement, not a line per row.
+    assert!(
+        out.contains("[DEBUG] [Insert] 3 row(s) into 'emp'"),
+        "{}",
+        out
+    );
+    assert!(
+        out.contains("[DEBUG] [Delete] 1 row(s) from 'emp'"),
+        "{}",
+        out
+    );
+}
+
+/// The per-statement JSON operation log is written only with
+/// `--log-operations`.
+#[test]
+fn operation_log_is_opt_in() {
+    let lines = [
+        "CREATE DATABASE ol;",
+        "USE ol;",
+        "CREATE TABLE t (id INT, v INT);",
+        "INSERT INTO t VALUES (1, 1), (2, 2);",
+        "UPDATE t SET v = 5 WHERE id = 1;",
+        "DELETE FROM t WHERE id = 2;",
+    ];
+    let logs = |ws: &Workspace| ws.path().join("database").join("logs").join("ol").join("t");
+
+    let ws = Workspace::new("oplog_off");
+    run(&ws, &lines);
+    assert!(
+        !logs(&ws).exists(),
+        "operation log written without the flag"
+    );
+
+    let ws = Workspace::new("oplog_on");
+    run_with_args(&ws, &["--log-operations"], &lines);
+    for file in ["update.log", "delete.log"] {
+        let text = std::fs::read_to_string(logs(&ws).join(file))
+            .unwrap_or_else(|e| panic!("{}: {}", file, e));
+        assert_eq!(text.lines().count(), 1, "{}: {}", file, text);
+        assert!(text.contains("\"status\":\"success\""), "{}", text);
+    }
 }

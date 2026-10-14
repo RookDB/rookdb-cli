@@ -20,96 +20,45 @@
 //! ```
 //!
 //! `exit` / `quit` (typed alone on a line) leave the shell.
+//!
+//! # Flags
+//!
+//! - `--echo` / `-e`: print each statement before its result.
+//! - `--engine-log` / `-v`: also print the engine's debug log (otherwise
+//!   only its warnings and errors). `RUST_LOG` overrides the filter.
+//! - `--log-operations`: keep the per-statement JSON operation log under
+//!   `database/logs/`.
 
 use rook_parser::parse_sql;
 use std::io::{self, IsTerminal, Write};
 use storage_manager::backend::session::Session;
 
 fn main() -> io::Result<()> {
-    // Surface the engine's planner/executor decisions ([Volcano] …) and DML lifecycle.
-    // Default to clean, categorized, colorized output so decisions and debug details are easy to parse.
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or(
-            "storage_manager=info,storage_manager::backend::index::btree=warn,storage_manager::backend::buffer_manager=warn,storage_manager::backend::system_table=warn,storage_manager::backend::catalog=warn"
-        ),
-    )
-    .target(env_logger::Target::Stdout)
-    .format(|buf, record| {
-        use std::io::Write;
-        let msg = record.args().to_string();
-        // Filter out noisy internal engine setup lines
-        if msg.starts_with("[BTree::open]")
-            || msg.starts_with("[SystemCatalog]")
-            || msg.contains("catalog directory")
-            || msg.contains("Saving catalog")
-            || msg.contains("Loading catalog")
-            || msg.contains("Initializing catalog")
-            || msg.contains("New table initialized")
-            || msg.contains("Table data file created")
-            || msg.ends_with("initialized successfully.")
-            || msg.ends_with("saved to catalog.")
-            || msg.contains("Starting single tuple insertion")
-            || msg.contains("Successfully inserted at")
-            || msg.starts_with("[Volcano] Plan: ")
-            || msg.starts_with("[Volcano] Executing logical plan")
-        {
-            return Ok(());
-        }
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let flag = |names: &[&str]| args.iter().any(|a| names.contains(&a.as_str()));
 
-        // Format clean Volcano and DML lifecycle debug output with colors and tags
-        if msg.starts_with("[Volcano] Using HashJoin")
-            || msg.starts_with("[Volcano] Using IndexNestedLoopJoin")
-        {
-            writeln!(buf, "  \x1b[1;35m[JOIN]\x1b[0m       {}", msg.trim_start_matches("[Volcano] "))
-        } else if msg.starts_with("[Volcano] Index-accelerated scan:") {
-            writeln!(buf, "  \x1b[1;32m[INDEX SCAN]\x1b[0m {}", msg.trim_start_matches("[Volcano] "))
-        } else if msg.starts_with("[Volcano] Using index-accelerated scan") {
-            Ok(()) // redundant with mode log
-        } else if msg.starts_with("[Volcano] Named index") {
-            let table = if msg.contains("emp.emp_dept_idx") { "emp" } else { "table" };
-            writeln!(buf, "  \x1b[1;32m[INDEX SCAN]\x1b[0m Table '{}' scanned via index 'emp_dept_idx' (FullScan)", table)
-        } else if msg.starts_with("[Volcano] No index file found for table") {
-            let table = msg.split('\'').nth(1).unwrap_or("table");
-            writeln!(buf, "  \x1b[1;36m[SCAN]\x1b[0m       Table '{}' has no index, using SeqScan", table)
-        } else if msg.starts_with("[Volcano] Sort has limit") {
-            writeln!(buf, "  \x1b[1;33m[OPTIMIZE]\x1b[0m   {}", msg.trim_start_matches("[Volcano] "))
-        } else if msg.starts_with("[Volcano] Built physical operator tree") {
-            writeln!(buf, "  \x1b[1;34m[PIPELINE]\x1b[0m   {}", msg.trim_start_matches("[Volcano] "))
-        } else if msg.starts_with("[Volcano] Planning") {
-            writeln!(buf, "  \x1b[1;34m[PLANNER]\x1b[0m    {}", msg.trim_start_matches("[Volcano] "))
-        } else if msg.starts_with("[Insert]") {
-            writeln!(buf, "  \x1b[1;33m[DML:INSERT]\x1b[0m {}", msg.trim_start_matches("[Insert] "))
-        } else if msg.starts_with("[Update] Validated row at") {
-            let pos = msg.split(':').next().unwrap_or("[Update]");
-            let clean_pos = pos.trim_start_matches("[Update] Validated row at ").trim();
-            writeln!(buf, "  \x1b[1;33m[DML:UPDATE]\x1b[0m Row at {} validated & updated (appended new version, old marked deleted)", clean_pos)
-        } else if msg.starts_with("[Update] Marked old slot") {
-            Ok(()) // Cleanly represented by the row update line above
-        } else if msg.starts_with("[Update]") {
-            writeln!(buf, "  \x1b[1;33m[DML:UPDATE]\x1b[0m {}", msg.trim_start_matches("[Update] "))
-        } else if msg.starts_with("[Delete] Soft-deleted slot") {
-            let slot = if let Some(start) = msg.find("slot ") {
-                let rest = &msg[start + "slot ".len()..];
-                rest.split(", updated").next().unwrap_or("").trim()
-            } else {
-                ""
+    // The shell shows statement results and messages; of the engine's log,// only warnings and errors. `--engine-log` adds the engine's debug log
+    // (planner notes, per-statement DML summaries); RUST_LOG overrides both.
+    // Plan decisions are not read from the log: `EXPLAIN <query>` returns them.
+    let default_filter = if flag(&["--engine-log", "-v"]) {
+        "warn,storage_manager=debug,storage_manager::backend::index::btree=warn,storage_manager::backend::buffer_manager=warn,storage_manager::backend::system_table=warn,storage_manager::backend::catalog=warn"
+    } else {
+        "warn"
+    };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_filter))
+        .target(env_logger::Target::Stdout)
+        .format(|buf, record| {
+            use std::io::Write;
+            let tag = match record.level() {
+                log::Level::Error => "[1;31m[ERROR][0m",
+                log::Level::Warn => "[1;33m[WARN][0m ",
+                log::Level::Info => "[INFO] ",
+                log::Level::Debug => "[DEBUG]",
+                log::Level::Trace => "[TRACE]",
             };
-            writeln!(buf, "  \x1b[1;33m[DML:DELETE]\x1b[0m Soft-deleted row at {}, updated index and visibility map", slot)
-        } else if msg.starts_with("[Delete]") {
-            writeln!(buf, "  \x1b[1;33m[DML:DELETE]\x1b[0m {}", msg.trim_start_matches("[Delete] "))
-        } else if msg.starts_with("[CreateIndex]") {
-            writeln!(buf, "  \x1b[1;32m[INDEX]\x1b[0m      {}", msg.trim_start_matches("[CreateIndex] "))
-        } else if msg.starts_with("[Volcano]") {
-            writeln!(buf, "  \x1b[1;34m[PLANNER]\x1b[0m    {}", msg.trim_start_matches("[Volcano] "))
-        } else if record.level() == log::Level::Warn {
-            writeln!(buf, "  \x1b[1;33m[WARN]\x1b[0m       {}", msg)
-        } else if record.level() == log::Level::Error {
-            writeln!(buf, "  \x1b[1;31m[ERROR]\x1b[0m      {}", msg)
-        } else {
-            writeln!(buf, "  │ {}", msg)
-        }
-    })
-    .init();
+            writeln!(buf, "  {} {}", tag, record.args())
+        })
+        .init();
     storage_manager::backend::executor::row_select::register_where_parser(
         rook_parser::parse_where_text,
     );
@@ -117,7 +66,7 @@ fn main() -> io::Result<()> {
     storage_manager::backend::planner::plan_cache::register_sql_parser(rook_parser::parse_sql);
 
     let is_piped = !io::stdin().is_terminal();
-    let echo_sql = std::env::args().any(|a| a == "--echo" || a == "-e")
+    let echo_sql = flag(&["--echo", "-e"])
         || std::env::var("ROOKDB_ECHO")
             .map(|v| v != "0")
             .unwrap_or(false);
@@ -128,7 +77,13 @@ fn main() -> io::Result<()> {
     }
 
     storage_manager::catalog::init_catalog();
-    let mut session = Session::new(storage_manager::catalog::load_catalog());
+    let catalog = storage_manager::catalog::load_catalog();
+    // `--log-operations`: UPDATE, DELETE and compaction append a JSON line
+    // per statement under database/logs/ (off by default).
+    catalog
+        .engine()
+        .set_log_operations(flag(&["--log-operations"]));
+    let mut session = Session::new(catalog);
 
     // Accumulates input across lines until a terminator completes it.
     let mut pending = String::new();
@@ -245,7 +200,13 @@ fn execute(sql: &str, session: &mut Session) {
     };
     match session.execute(plan) {
         Ok(result) => {
-            if let Some((schema, rows)) = &result.rows {
+            if let Some(plan) = &result.plan {
+                // EXPLAIN: the plan as an indented tree, not a table of
+                // quoted, width-capped cells.
+                for line in plan.lines() {
+                    println!("{}", line);
+                }
+            } else if let Some((schema, rows)) = &result.rows {
                 storage_manager::executor::physical::tuple::display_tuples(rows, schema);
             }
             for line in &result.messages {
