@@ -36,6 +36,9 @@ serde = "1.0.228"
 env_logger = "0.11"
 log = "0.4"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [[bin]]
 name = "join_bench"
 path = "src/bin/join_bench.rs"

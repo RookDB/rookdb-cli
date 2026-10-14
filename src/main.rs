@@ -28,16 +28,25 @@
 //!   only its warnings and errors). `RUST_LOG` overrides the filter.
 //! - `--log-operations`: keep the per-statement JSON operation log under
 //!   `database/logs/`.
+//!
+//! # Durability
+//!
+//! Each statement's pages are written to their files when it finishes, so a
+//! crash of the shell loses nothing. The fsync that covers a power loss is
+//! shared by statements arriving within 200 ms of each other, and runs as
+//! soon as the shell is about to wait for input that has not arrived yet,
+//! so nothing stays un-fsynced while the shell sits idle at the prompt.
 
 use rook_parser::parse_sql;
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, BufRead, BufReader, IsTerminal, Write};
 use storage_manager::backend::session::Session;
 
 fn main() -> io::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flag = |names: &[&str]| args.iter().any(|a| names.contains(&a.as_str()));
 
-    // The shell shows statement results and messages; of the engine's log,// only warnings and errors. `--engine-log` adds the engine's debug log
+    // The shell shows statement results and messages; of the engine's log,
+    // only warnings and errors. `--engine-log` adds the engine's debug log
     // (planner notes, per-statement DML summaries); RUST_LOG overrides both.
     // Plan decisions are not read from the log: `EXPLAIN <query>` returns them.
     let default_filter = if flag(&["--engine-log", "-v"]) {
@@ -87,6 +96,9 @@ fn main() -> io::Result<()> {
 
     // Accumulates input across lines until a terminator completes it.
     let mut pending = String::new();
+    // Larger than stdin's own buffer, so reads bypass it and every line not
+    // yet consumed is visible here (see `input_waiting`).
+    let mut input = BufReader::with_capacity(64 * 1024, io::stdin());
 
     loop {
         if !is_piped {
@@ -103,8 +115,15 @@ fn main() -> io::Result<()> {
             io::stdout().flush()?;
         }
 
+        // About to wait for input that has not arrived: fsync what earlier
+        // statements left pending instead of holding it until the next
+        // statement or exit.
+        if !input_waiting(&input) {
+            storage_manager::backend::cache::checkpoint_durable();
+        }
+
         let mut line = String::new();
-        if io::stdin().read_line(&mut line)? == 0 {
+        if input.read_line(&mut line)? == 0 {
             // EOF (piped input): execute whatever is left, then stop.
             if !pending.trim().is_empty() {
                 let stmt = pending.trim();
@@ -153,6 +172,30 @@ fn main() -> io::Result<()> {
     // Everything still un-fsynced goes to disk before the process exits.
     storage_manager::backend::cache::checkpoint_durable();
     Ok(())
+}
+
+/// Whether a line can be read without waiting: one is already buffered, or
+/// stdin has bytes (or end of file) ready.
+fn input_waiting(input: &BufReader<io::Stdin>) -> bool {
+    !input.buffer().is_empty() || stdin_ready()
+}
+
+#[cfg(unix)]
+fn stdin_ready() -> bool {
+    use std::os::fd::AsRawFd;
+    let mut fd = libc::pollfd {
+        fd: io::stdin().as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: one valid pollfd and a zero timeout; poll only writes `revents`.
+    unsafe { libc::poll(&mut fd, 1, 0) > 0 }
+}
+
+/// Without `poll`, treat input as never ready: an fsync before every read.
+#[cfg(not(unix))]
+fn stdin_ready() -> bool {
+    false
 }
 
 /// Print a high-visibility double-bordered banner for an executing SQL query.

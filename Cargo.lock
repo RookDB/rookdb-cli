@@ -486,6 +486,7 @@ name = "rookdb-cli"
 version = "0.1.0"
 dependencies = [
  "env_logger",
+ "libc",
  "log",
  "rook-ast",
  "rook-parser",
