@@ -111,6 +111,26 @@ fn less_equal_includes_bound() {
 }
 
 #[test]
+fn index_scan_columns_answer_to_the_table_alias() {
+    let ws = ws_with_index("alias");
+    // Once aliased, the indexed table's columns are named `e.<col>`.
+    expect_rows(
+        &ws,
+        &["USE pay;"],
+        "SELECT e.name FROM emp e WHERE e.salary = 91000;",
+        &[&["'Dee'"]],
+    );
+    // An aliased index scan on one side of a join still resolves its keys.
+    expect_rows(
+        &ws,
+        &["USE pay;"],
+        "SELECT a.name, b.name FROM emp a JOIN emp b ON b.id = a.id + 1 \
+         WHERE a.salary = 91000;",
+        &[&["'Dee'", "'Eve'"]],
+    );
+}
+
+#[test]
 fn single_element_in_uses_point_lookup() {
     let ws = ws_with_index("in");
     expect_rows(
