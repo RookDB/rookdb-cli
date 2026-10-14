@@ -1040,3 +1040,70 @@ fn quoted_database_index_and_view_names_work_end_to_end() {
     let out = run(&ws, &["USE d;", "CREATE VIEW \"a/b\" AS SELECT 1;"]);
     assert!(out.contains("Invalid view name"), "{}", out);
 }
+
+// ── Correlated subqueries: which outer column a reference names ─────────────
+
+const SCOPE_SETUP: &[&str] = &[
+    "CREATE DATABASE d;",
+    "USE d;",
+    "CREATE TABLE a (x INT, y INT);",
+    "CREATE TABLE a2 (x INT, y INT);",
+    "CREATE TABLE b (x INT, z INT);",
+    "CREATE TABLE l (id INT);",
+    "CREATE TABLE r (id INT, l_id INT);",
+    "CREATE TABLE t (k INT);",
+    "INSERT INTO a VALUES (1, 10), (2, 20), (3, 30);",
+    "INSERT INTO a2 VALUES (1, 10);",
+    "INSERT INTO b VALUES (1, 10), (2, 99), (3, 30), (5, 20);",
+    "INSERT INTO l VALUES (1), (2);",
+    "INSERT INTO r VALUES (10, 1), (20, 2);",
+    "INSERT INTO t VALUES (10), (10), (20);",
+];
+
+#[test]
+fn unqualified_outer_column_in_an_in_subquery_is_correlated() {
+    let ws = Workspace::new("rf_in_outer_col");
+    run(&ws, SCOPE_SETUP);
+    // `y` exists only in the outer table a.
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT * FROM a WHERE a.x IN (SELECT b.x FROM b WHERE b.z = y);",
+        &[&["1", "10"], &["3", "30"]],
+    );
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT * FROM a WHERE a.x NOT IN (SELECT b.x FROM b WHERE b.z = y);",
+        &[&["2", "20"]],
+    );
+}
+
+#[test]
+fn unqualified_outer_column_in_two_outer_tables_is_ambiguous() {
+    let ws = Workspace::new("rf_in_outer_ambiguous");
+    run(&ws, SCOPE_SETUP);
+    let out = run(
+        &ws,
+        &[
+            "USE d;",
+            "SELECT a.x FROM a JOIN a2 ON a.x = a2.x \
+             WHERE a.x IN (SELECT b.x FROM b WHERE b.z = y);",
+        ],
+    );
+    assert!(out.contains("Column reference 'y' is ambiguous"), "{}", out);
+}
+
+#[test]
+fn select_list_subquery_binds_the_qualified_outer_column() {
+    let ws = Workspace::new("rf_select_outer_qual");
+    run(&ws, SCOPE_SETUP);
+    // Both l and r have `id`; r.id is 10 / 20, so the counts are 2 / 1.
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT l.id, (SELECT count(*) FROM t WHERE t.k = r.id) \
+         FROM l JOIN r ON l.id = r.l_id ORDER BY l.id;",
+        &[&["1", "2"], &["2", "1"]],
+    );
+}
