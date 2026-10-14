@@ -1248,3 +1248,17 @@ fn correlated_not_in_keeps_three_valued_logic() {
         &[&["1"], &["2"], &["3"], &["4"]],
     );
 }
+
+#[test]
+fn subquerys_output_alias_wins_over_an_outer_column_in_order_by() {
+    let ws = Workspace::new("rf_alias_over_outer");
+    run(&ws, SCOPE_SETUP);
+    // `y` is a.y in WHERE and the subquery's alias for b.z in ORDER BY.
+    expect_rows(
+        &ws,
+        &["USE d;"],
+        "SELECT x, (SELECT z AS y FROM b WHERE b.x <= a.x AND z <= y + 100 \
+         ORDER BY y DESC LIMIT 1) FROM a ORDER BY x;",
+        &[&["1", "10"], &["2", "99"], &["3", "99"]],
+    );
+}
