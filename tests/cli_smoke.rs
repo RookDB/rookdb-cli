@@ -352,7 +352,9 @@ fn explain_prints_the_plan_tree() {
     let mut lines = EMP.to_vec();
     // Probing an index beats a hash join only once the tables are big enough
     // for the scan to cost something, so pad emp with rows in no department.
-    let padding: Vec<String> = (1000..1300).map(|i| format!("({}, 'x{}', 99)", i, i)).collect();
+    let padding: Vec<String> = (1000..1300)
+        .map(|i| format!("({}, 'x{}', 99)", i, i))
+        .collect();
     let insert = format!("INSERT INTO emp VALUES {};", padding.join(", "));
     lines.push(&insert);
     lines.push("EXPLAIN SELECT name FROM emp WHERE dept = 2;");

@@ -965,3 +965,78 @@ fn quoted_table_names_work_end_to_end() {
     let out = run(&ws, &["USE d;", "CREATE TABLE \"a/b\" (id INT);"]);
     assert!(out.contains("Invalid table name"), "{}", out);
 }
+
+#[test]
+fn quoted_database_index_and_view_names_work_end_to_end() {
+    let ws = Workspace::new("rf_quoted_objects");
+    run(
+        &ws,
+        &[
+            "CREATE DATABASE \"Sales Db\";",
+            "USE \"Sales Db\";",
+            "CREATE TABLE \"My Table\" (\"my col\" INT, \"Total\" INT);",
+            "INSERT INTO \"My Table\" VALUES (1, 10), (2, 20);",
+            "CREATE INDEX \"My Idx\" ON \"My Table\" (\"my col\");",
+            "CREATE VIEW \"My View\" AS SELECT \"my col\" FROM \"My Table\" WHERE \"Total\" > 10;",
+        ],
+    );
+    // The database directory has its real name, with no quote characters.
+    let shown = run(&ws, &["SHOW DATABASES;"]);
+    assert!(shown.contains("Sales Db"), "{}", shown);
+    assert!(!shown.contains("\"Sales Db\""), "{}", shown);
+    // A second process can connect, read through the view and the index.
+    expect_rows(
+        &ws,
+        &["USE \"Sales Db\";"],
+        "SELECT * FROM \"My View\";",
+        &[&["2"]],
+    );
+    expect_rows(
+        &ws,
+        &["USE \"Sales Db\";"],
+        "SELECT \"Total\" FROM \"My Table\" WHERE \"my col\" = 1;",
+        &[&["10"]],
+    );
+    // Dropping works by quoted name.
+    run(
+        &ws,
+        &[
+            "USE \"Sales Db\";",
+            "DROP VIEW \"My View\";",
+            "DROP INDEX \"My Idx\";",
+        ],
+    );
+    let out = run(&ws, &["USE \"Sales Db\";", "SELECT * FROM \"My View\";"]);
+    assert!(
+        out.to_lowercase().contains("error") || out.to_lowercase().contains("not"),
+        "{}",
+        out
+    );
+    // The dropped index can be created again.
+    let out = run(
+        &ws,
+        &[
+            "USE \"Sales Db\";",
+            "CREATE INDEX \"My Idx\" ON \"My Table\" (\"Total\");",
+        ],
+    );
+    assert!(!out.to_lowercase().contains("exist"), "{}", out);
+    run(&ws, &["DROP DATABASE \"Sales Db\";"]);
+    let shown = run(&ws, &["SHOW DATABASES;"]);
+    assert!(!shown.contains("Sales Db"), "{}", shown);
+
+    // Names a file cannot hold are rejected.
+    let out = run(&ws, &["CREATE DATABASE \"a/b\";"]);
+    assert!(out.contains("Invalid database name"), "{}", out);
+    let out = run(
+        &ws,
+        &[
+            "CREATE DATABASE d;",
+            "USE d;",
+            "CREATE INDEX \"a/b\" ON t (c);",
+        ],
+    );
+    assert!(out.contains("Invalid index name"), "{}", out);
+    let out = run(&ws, &["USE d;", "CREATE VIEW \"a/b\" AS SELECT 1;"]);
+    assert!(out.contains("Invalid view name"), "{}", out);
+}
