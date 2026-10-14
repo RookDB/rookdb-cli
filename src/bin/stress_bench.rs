@@ -15,7 +15,7 @@
 
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use storage_manager::catalog::{
     Catalog, Column, create_database, create_table, init_catalog, load_catalog,
@@ -38,11 +38,21 @@ impl Lcg {
     }
 }
 
-fn result(name: &str, n: u64, ms: u128, extra: &str) {
-    let rps = if ms > 0 { n as u128 * 1000 / ms } else { 0 };
+fn result(name: &str, n: u64, elapsed: Duration, extra: &str) {
+    let us = elapsed.as_micros();
+    let rps = if us > 0 {
+        n as u128 * 1_000_000 / us
+    } else {
+        0
+    };
     println!(
-        "[RESULT] phase={} n={} elapsed_ms={} rows_per_sec={} {}",
-        name, n, ms, rps, extra
+        "[RESULT] phase={} n={} elapsed_ms={} elapsed_us={} rows_per_sec={} {}",
+        name,
+        n,
+        elapsed.as_millis(),
+        us,
+        rps,
+        extra
     );
     let _ = std::io::stdout().flush();
 }
@@ -138,9 +148,14 @@ fn bench_raw(n: u64, tag: &str) {
         }
     }
     hm.flush().unwrap();
-    let ms = t.elapsed().as_millis();
+    let elapsed = t.elapsed();
     let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-    result("raw_heap_insert", n, ms, &format!("file_bytes={}", size));
+    result(
+        "raw_heap_insert",
+        n,
+        elapsed,
+        &format!("file_bytes={}", size),
+    );
 
     // sequential scan (live rows only, streaming)
     // (HeapManager::scan checkpoints executor caches automatically.)
@@ -151,25 +166,49 @@ fn bench_raw(n: u64, tag: &str) {
             cnt += 1;
         }
     }
-    result("raw_seq_scan", cnt, t.elapsed().as_millis(), "");
+    result("raw_seq_scan", cnt, t.elapsed(), "");
 
-    // point gets: 10k random samples via stored locations
+    // point gets: random rows via stored locations, the same count at every
+    // size. An untimed warm-up brings the buffer pool to its steady state
+    // (the scans above leave it holding the file's tail), then the median of
+    // POINT_ROUNDS timed rounds is reported, so one noisy round can't skew it.
+    const POINT_SAMPLES: u64 = 100_000;
+    const POINT_ROUNDS: usize = 5;
     let mut rng = Lcg(0x9E37_79B9_7F4A_7C15);
-    let samples = 10_000u64.min(n);
     // rebuild a location index by scanning once (id order == slot order here)
     let mut locs: Vec<(u32, u32)> = Vec::with_capacity(n as usize);
     for (p, s, _) in hm.scan().flatten() {
         locs.push((p, s));
     }
-    let t = Instant::now();
-    for _ in 0..samples {
-        let (p, s) = locs[rng.below(n) as usize];
-        if hm.get_tuple(p, s).is_err() {
-            eprintln!("[ERROR] raw point get failed");
-            return;
+    let mut round = |count: u64| -> Option<u128> {
+        let t = Instant::now();
+        for _ in 0..count {
+            let (p, s) = locs[rng.below(n) as usize];
+            if hm.get_tuple(p, s).is_err() {
+                eprintln!("[ERROR] raw point get failed");
+                return None;
+            }
+        }
+        Some(t.elapsed().as_micros())
+    };
+    if round(POINT_SAMPLES).is_none() {
+        return;
+    }
+    let mut us = Vec::with_capacity(POINT_ROUNDS);
+    for _ in 0..POINT_ROUNDS {
+        match round(POINT_SAMPLES) {
+            Some(t) => us.push(t),
+            None => return,
         }
     }
-    result("raw_point_get", samples, t.elapsed().as_millis(), "queries");
+    us.sort_unstable();
+    let median_us = us[POINT_ROUNDS / 2];
+    result(
+        "raw_point_get",
+        POINT_SAMPLES,
+        Duration::from_micros(median_us as u64),
+        &format!("queries,median_of={}", POINT_ROUNDS),
+    );
 }
 
 // ── ENGINE tier (typed validation + serialization, optional index upkeep) ────
@@ -205,7 +244,7 @@ fn bench_engine(n: u64, tag: &str, with_index: bool) {
             "typed_insert_plain"
         },
         n,
-        t.elapsed().as_millis(),
+        t.elapsed(),
         "",
     );
 
@@ -215,7 +254,7 @@ fn bench_engine(n: u64, tag: &str, with_index: bool) {
     // COUNT(*) through planner + Volcano aggregate
     let t = Instant::now();
     match count_via_sql(&catalog, db, "SELECT COUNT(*) FROM staff") {
-        Ok(c) => result("volcano_count_star", c, t.elapsed().as_millis(), ""),
+        Ok(c) => result("volcano_count_star", c, t.elapsed(), ""),
         Err(e) => eprintln!("[ERROR] count: {}", e),
     }
 
@@ -225,7 +264,7 @@ fn bench_engine(n: u64, tag: &str, with_index: bool) {
         Ok(c) => result(
             "volcano_count_distinct",
             n,
-            t.elapsed().as_millis(),
+            t.elapsed(),
             &format!("distinct={}", c),
         ),
         Err(e) => eprintln!("[ERROR] count distinct: {}", e),
@@ -244,12 +283,7 @@ fn bench_engine(n: u64, tag: &str, with_index: bool) {
                 return;
             }
         }
-        result(
-            "sql_point_select",
-            samples,
-            t.elapsed().as_millis(),
-            "queries",
-        );
+        result("sql_point_select", samples, t.elapsed(), "queries");
     }
 }
 
@@ -313,7 +347,7 @@ fn bench_pipeline(n: u64, tag: &str) {
             eprintln!("  ...pipeline insert {}/{}", i, n);
         }
     }
-    result("pipeline_insert_sqltext", n, t.elapsed().as_millis(), "");
+    result("pipeline_insert_sqltext", n, t.elapsed(), "");
 }
 
 fn route_insert(catalog: &Catalog, db: &str, sql: &str) -> Result<usize, String> {
@@ -381,7 +415,7 @@ fn bench_join(m: u64, tag: &str) {
             return;
         }
     }
-    result("join_setup_inserts", m * 3, t.elapsed().as_millis(), "");
+    result("join_setup_inserts", m * 3, t.elapsed(), "");
 
     // Make everything durable before the read query.
     storage_manager::backend::cache::checkpoint();
@@ -390,9 +424,10 @@ fn bench_join(m: u64, tag: &str) {
     let tj = Instant::now();
     match count_via_sql(&catalog, db, sql) {
         Ok(c) => println!(
-            "[RESULT] phase=hash_join_count matched={} elapsed_ms={} side_a={} side_b={}",
+            "[RESULT] phase=hash_join_count matched={} elapsed_ms={} elapsed_us={} side_a={} side_b={}",
             c,
             tj.elapsed().as_millis(),
+            tj.elapsed().as_micros(),
             m,
             m * 2
         ),
@@ -445,7 +480,7 @@ fn bench_mutate(n: u64, tag: &str) {
     result(
         "update_range_pointers",
         upd.updated_count as u64,
-        t.elapsed().as_millis(),
+        t.elapsed(),
         "",
     );
     eprintln!(
@@ -467,7 +502,7 @@ fn bench_mutate(n: u64, tag: &str) {
     result(
         "delete_range_pointers",
         del.deleted_count as u64,
-        t.elapsed().as_millis(),
+        t.elapsed(),
         "",
     );
 
@@ -475,10 +510,14 @@ fn bench_mutate(n: u64, tag: &str) {
     let t = Instant::now();
     match storage_manager::backend::executor::vacuum::vacuum_table(&catalog, db, "staff") {
         Ok(st) => {
-            let ms = t.elapsed().as_millis();
+            let elapsed = t.elapsed();
             println!(
-                "[RESULT] phase=vacuum pages_compacted={} dead_reclaimed={} indexes_rebuilt={} elapsed_ms={}",
-                st.pages_compacted, st.dead_tuples_before, st.indexes_rebuilt, ms
+                "[RESULT] phase=vacuum pages_compacted={} dead_reclaimed={} indexes_rebuilt={} elapsed_ms={} elapsed_us={}",
+                st.pages_compacted,
+                st.dead_tuples_before,
+                st.indexes_rebuilt,
+                elapsed.as_millis(),
+                elapsed.as_micros()
             );
             let _ = std::io::stdout().flush();
         }
