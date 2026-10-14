@@ -947,3 +947,21 @@ fn quoted_column_names_work_end_to_end() {
         &[&["3"], &["9"]],
     );
 }
+
+#[test]
+fn quoted_table_names_work_end_to_end() {
+    let ws = Workspace::new("rf_quoted_table");
+    run(
+        &ws,
+        &[
+            "CREATE DATABASE d;",
+            "USE d;",
+            "CREATE TABLE \"My Table\" (id INT);",
+            "INSERT INTO \"My Table\" VALUES (1);",
+        ],
+    );
+    // A second process sees the table: it was stored under its real name.
+    expect_rows(&ws, &["USE d;"], "SELECT * FROM \"My Table\";", &[&["1"]]);
+    let out = run(&ws, &["USE d;", "CREATE TABLE \"a/b\" (id INT);"]);
+    assert!(out.contains("Invalid table name"), "{}", out);
+}
