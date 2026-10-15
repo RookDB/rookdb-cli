@@ -26,6 +26,13 @@
 //! - `--echo` / `-e`: print each statement before its result.
 //! - `--engine-log` / `-v`: also print the engine's debug log (otherwise
 //!   only its warnings and errors). `RUST_LOG` overrides the filter.
+//! - `--no-cache[=TIERS]`: switch off the engine's caches, all of them or
+//!   the comma-separated tiers named (`plans`, `meta`, `handles`, `paths`),
+//!   to measure what they save. Results are the same, only slower.
+//!   `ROOK_NO_CACHE=TIERS` does the same for any program using the engine.
+//! - `--cache-stats`: after each statement, print its cache lookups per
+//!   site as `hits/lookups`. A count that grows with the rows a statement
+//!   touches is work done per row that could be done once.
 //! - `--log-operations`: keep the per-statement JSON operation log under
 //!   `database/logs/`.
 //!
@@ -90,6 +97,27 @@ fn main() -> io::Result<()> {
     catalog
         .engine()
         .set_log_operations(flag(&["--log-operations"]));
+    for arg in &args {
+        let tiers = match arg.as_str() {
+            "--no-cache" => "all",
+            _ => match arg.strip_prefix("--no-cache=") {
+                Some(list) => list,
+                None => continue,
+            },
+        };
+        match storage_manager::backend::cache::CacheTier::parse_list(tiers) {
+            Ok(tiers) => {
+                for tier in tiers {
+                    catalog.engine().set_cache_enabled(tier, false);
+                }
+            }
+            Err(e) => {
+                eprintln!("Error: --no-cache: {}", e);
+                std::process::exit(2);
+            }
+        }
+    }
+    let cache_stats = flag(&["--cache-stats"]);
     let mut session = Session::new(catalog);
 
     // Accumulates input across lines until a terminator completes it.
@@ -128,7 +156,7 @@ fn main() -> io::Result<()> {
                 if echo_sql {
                     print_sql_banner(stmt);
                 }
-                execute(stmt, &mut session);
+                execute_counted(stmt, &mut session, cache_stats);
             }
             break;
         }
@@ -159,7 +187,7 @@ fn main() -> io::Result<()> {
             if echo_sql {
                 print_sql_banner(&stmt);
             }
-            execute(&stmt, &mut session);
+            execute_counted(&stmt, &mut session, cache_stats);
             // Statement boundary: write the statement's pages to their files.
             // The fsync is shared by statements arriving within the sync
             // interval, so a script does not pay one per row.
@@ -221,6 +249,18 @@ fn print_sql_banner(sql: &str) {
         }
     }
     println!("\x1b[1;36m╚{}\x1b[0m", bottom_border);
+}
+
+/// [`execute`], then print the statement's cache lookups when `cache_stats`.
+fn execute_counted(sql: &str, session: &mut Session, cache_stats: bool) {
+    if !cache_stats {
+        execute(sql, session);
+        return;
+    }
+    let before = session.catalog.engine().cache_stats();
+    execute(sql, session);
+    let lookups = session.catalog.engine().cache_stats().since(&before);
+    println!("\x1b[2m  cache: {}\x1b[0m", lookups);
 }
 
 /// Execute one SQL statement string, printing its results or error.
