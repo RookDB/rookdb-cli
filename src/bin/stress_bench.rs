@@ -515,10 +515,9 @@ fn bench_mutate(n: u64, tag: &str) {
         Ok(st) => {
             let elapsed = t.elapsed();
             println!(
-                "[RESULT] phase=vacuum pages_compacted={} dead_reclaimed={} indexes_rebuilt={} elapsed_ms={} elapsed_us={}",
+                "[RESULT] phase=vacuum pages_compacted={} dead_reclaimed={} elapsed_ms={} elapsed_us={}",
                 st.pages_compacted,
                 st.dead_tuples_before,
-                st.indexes_rebuilt,
                 elapsed.as_millis(),
                 elapsed.as_micros()
             );
