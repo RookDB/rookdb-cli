@@ -38,6 +38,12 @@ const QUERIES: &[(&str, &str)] = &[
     ("project_ints", "SELECT id, k FROM t"),
     ("project_str", "SELECT name FROM t"),
     ("project_all", "SELECT * FROM t"),
+    // Expressions evaluated per row, on every column.
+    (
+        "expr_filter",
+        "SELECT COUNT(*) FROM t WHERE k + id > 500 AND name <> 'x'",
+    ),
+    ("expr_project", "SELECT id + k, k * 2, UPPER(name) FROM t"),
     // The same rows in `p`, read through its indexes.
     (
         "pk_range",
