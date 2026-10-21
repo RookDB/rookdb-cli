@@ -55,7 +55,7 @@ fn main() {
             );
         }
     }
-    storage_manager::backend::cache::checkpoint_durable();
+    storage_manager::backend::cache::checkpoint_durable().expect("checkpoint");
     println!(
         "[LOAD] {} tables x {} rows in {} ms",
         tables,

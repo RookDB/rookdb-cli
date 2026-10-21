@@ -155,7 +155,7 @@ fn bench_sql(rows: usize, repeats: usize) {
             &format!("INSERT INTO t VALUES {}", values.join(", ")),
         );
     }
-    storage_manager::backend::cache::checkpoint_durable();
+    storage_manager::backend::cache::checkpoint_durable().expect("checkpoint");
     println!(
         "[RESULT] {:<22} {:>8.2} ms  ({} rows into an indexed table)",
         "sql_insert",

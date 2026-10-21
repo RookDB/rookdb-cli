@@ -81,7 +81,7 @@ fn bench_insert() -> f64 {
     let t = Instant::now();
     run_ok(&mut s, &sql);
     let elapsed = ms(t);
-    storage_manager::backend::cache::checkpoint_durable();
+    storage_manager::backend::cache::checkpoint_durable().expect("checkpoint");
     drop(s);
     let _ = std::fs::remove_dir_all(&root);
     elapsed

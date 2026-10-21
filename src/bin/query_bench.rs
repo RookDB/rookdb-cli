@@ -89,7 +89,7 @@ fn main() {
         run(&mut s, &format!("INSERT INTO t VALUES {}", values));
         run(&mut s, &format!("INSERT INTO p VALUES {}", values));
     }
-    storage_manager::backend::cache::checkpoint_durable();
+    storage_manager::backend::cache::checkpoint_durable().expect("checkpoint");
     println!("[LOAD] {} rows in {} ms", rows, load.elapsed().as_millis());
 
     for (name, sql) in QUERIES {

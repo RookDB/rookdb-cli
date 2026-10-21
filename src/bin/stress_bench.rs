@@ -249,7 +249,7 @@ fn bench_engine(n: u64, tag: &str, with_index: bool) {
     );
 
     // Durability checkpoint before the read phases.
-    storage_manager::backend::cache::checkpoint();
+    storage_manager::backend::cache::checkpoint().expect("checkpoint");
 
     // COUNT(*) through planner + Volcano aggregate
     let t = Instant::now();
@@ -421,7 +421,7 @@ fn bench_join(m: u64, tag: &str) {
     result("join_setup_inserts", m * 3, t.elapsed(), "");
 
     // Make everything durable before the read query.
-    storage_manager::backend::cache::checkpoint();
+    storage_manager::backend::cache::checkpoint().expect("checkpoint");
 
     let sql = "SELECT COUNT(*) FROM staff JOIN orders ON staff.id = orders.staff_id";
     let tj = Instant::now();
@@ -458,7 +458,7 @@ fn bench_mutate(n: u64, tag: &str) {
     }
 
     // Durability checkpoint before mutation phases.
-    storage_manager::backend::cache::checkpoint();
+    storage_manager::backend::cache::checkpoint().expect("checkpoint");
 
     use rook_parser::parse_set_clause;
     use storage_manager::backend::executor::row_select::{

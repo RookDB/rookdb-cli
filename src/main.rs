@@ -151,8 +151,10 @@ fn main() -> io::Result<()> {
         // About to wait for input that has not arrived: fsync what earlier
         // statements left pending instead of holding it until the next
         // statement or exit.
-        if !input_waiting(&input) {
-            storage_manager::backend::cache::checkpoint_durable();
+        if !input_waiting(&input)
+            && let Err(e) = storage_manager::backend::cache::checkpoint_durable()
+        {
+            eprintln!("Error: {}", e);
         }
 
         let mut line = String::new();
@@ -198,12 +200,17 @@ fn main() -> io::Result<()> {
             // Statement boundary: write the statement's pages to their files.
             // The fsync is shared by statements arriving within the sync
             // interval, so a script does not pay one per row.
-            storage_manager::backend::cache::checkpoint();
+            if let Err(e) = storage_manager::backend::cache::checkpoint() {
+                eprintln!("Error: {}", e);
+            }
         }
     }
 
     // Everything still un-fsynced goes to disk before the process exits.
-    storage_manager::backend::cache::checkpoint_durable();
+    if let Err(e) = storage_manager::backend::cache::checkpoint_durable() {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    }
     Ok(())
 }
 

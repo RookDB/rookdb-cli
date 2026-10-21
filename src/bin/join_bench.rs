@@ -196,12 +196,12 @@ fn main() {
         load_rows(&mut s, "small", "id INT, x INT", 100, |i| {
             format!("({}, {})", i, i % 50)
         });
-        storage_manager::backend::cache::checkpoint_durable();
+        storage_manager::backend::cache::checkpoint_durable().expect("checkpoint");
         time_queries(&mut s, CHAIN_QUERIES, repeats);
     } else {
         load(&mut s, "a", rows, 1);
         load(&mut s, "b", rows, 2);
-        storage_manager::backend::cache::checkpoint_durable();
+        storage_manager::backend::cache::checkpoint_durable().expect("checkpoint");
         time_queries(&mut s, QUERIES, repeats);
     }
 
