@@ -99,7 +99,8 @@ fn make_db_with_staff(db: &str, with_index: bool) -> Catalog {
             col("name", DataType::Varchar(24)),
             col("salary", DataType::Int),
         ],
-    );
+    )
+    .unwrap();
     let _ = storage_manager::catalog::save_catalog(&c);
     if with_index {
         let c = load_catalog();
@@ -394,7 +395,8 @@ fn bench_join(m: u64, tag: &str) {
             col("staff_id", DataType::Int),
             col("amount", DataType::Int),
         ],
-    );
+    )
+    .unwrap();
 
     // populate staff (m rows) and orders (2 rows per staff member)
     let t = Instant::now();
