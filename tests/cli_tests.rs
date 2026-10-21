@@ -501,8 +501,8 @@ fn ddl_operations() {
          CREATE VIEW myview AS SELECT 1;\n\
          DROP VIEW myview;\n",
     );
-    assert_contains(&out, "AddColumn");
-    assert_contains(&out, "RenameColumn");
+    assert_contains(&out, "added column 'category' VARCHAR(20)");
+    assert_contains(&out, "renamed column 'category' to 'cat'");
     assert_contains(&out, "Renamed table");
     assert_contains(&out, "Created index");
     assert_contains(&out, "Gadget");
@@ -1519,7 +1519,7 @@ fn alter_table_drop_column() {
          ALTER TABLE t DROP COLUMN extra;\n\
          SELECT id, name FROM t;\n",
     );
-    assert_contains(&out, "DropColumn");
+    assert_contains(&out, "dropped column 'extra'");
     assert_not_contains(&out, "Parse error");
     // After DROP COLUMN extra, SELECT id, name should show Alice and Bob
     assert_contains(&out, "'Alice'");
@@ -1561,7 +1561,7 @@ fn alter_column_not_null() {
          ALTER TABLE t ALTER COLUMN val SET NOT NULL;\n\
          INSERT INTO t VALUES (3, 30);\n",
     );
-    assert_contains(&out, "SetNotNull");
+    assert_contains(&out, "column 'val' set NOT NULL");
     assert_contains(&out, "row inserted");
 }
 
