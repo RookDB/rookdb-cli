@@ -619,7 +619,11 @@ fn unknown_table_qualifier_is_an_error() {
     let ws = Workspace::new("rf_unknownqual");
     run(&ws, JOIN_SETUP);
     let out = run(&ws, &["USE d;", "SELECT zz.id FROM a;"]);
-    assert!(out.contains("Column 'zz.id' not found"), "{}", out);
+    assert!(
+        out.contains("missing FROM-clause entry for table 'zz'"),
+        "{}",
+        out
+    );
     // A real alias still resolves.
     expect_rows(
         &ws,
