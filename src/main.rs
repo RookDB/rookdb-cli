@@ -91,7 +91,14 @@ fn main() -> io::Result<()> {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }
-    let catalog = storage_manager::catalog::load_catalog();
+    let engine = storage_manager::backend::engine::Engine::current_dir();
+    let catalog = match storage_manager::catalog::try_load_catalog_in(&engine) {
+        Ok(catalog) => catalog,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    };
     // `--log-operations`: UPDATE, DELETE and compaction append a JSON line
     // per statement under database/logs/ (off by default).
     catalog
