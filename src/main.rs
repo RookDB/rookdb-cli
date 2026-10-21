@@ -87,11 +87,12 @@ fn main() -> io::Result<()> {
         println!("--------------------------------------\n");
     }
 
-    if let Err(e) = storage_manager::catalog::init_catalog() {
+    // One engine for both steps: it holds the data directory lock.
+    let engine = storage_manager::backend::engine::Engine::current_dir();
+    if let Err(e) = storage_manager::catalog::init_catalog_in(&engine) {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }
-    let engine = storage_manager::backend::engine::Engine::current_dir();
     let catalog = match storage_manager::catalog::try_load_catalog_in(&engine) {
         Ok(catalog) => catalog,
         Err(e) => {
