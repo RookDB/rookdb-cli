@@ -285,6 +285,7 @@ fn execute(
             }
             QueryPlan::Delete(ref p) => handlers::dml::handle_delete(catalog, current_db, p),
             QueryPlan::Vacuum(ref p) => handlers::ddl::handle_vacuum(catalog, current_db, p),
+            QueryPlan::Analyze(ref p) => handlers::ddl::handle_analyze(catalog, current_db, p),
             QueryPlan::Unknown(ref msg) => {
                 println!("Unsupported SQL statement: {}", msg);
                 Ok(())
