@@ -365,12 +365,10 @@ fn bug02_information_schema_columns() {
         "CREATE DATABASE bug02;\n\
          USE bug02;\n\
          CREATE TABLE products (id INT PRIMARY KEY, name VARCHAR(50), price DOUBLE PRECISION);\n\
-         SELECT table_name FROM information_schema.columns;\n",
+         SELECT column_name FROM information_schema.columns WHERE table_name = 'products';\n",
     );
 
-    // The info_schema.columns view maps:
-    //   table_name -> actual column name (id, name, price for the products table)
-    // This verifies the bug fix: column data is correct (not showing data_type strings)
+    // One row per column of the table, named by column_name (not data_type strings).
     assert_rows(&out, 3);
     assert_contains(&out, "id");
     assert_contains(&out, "name");
