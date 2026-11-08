@@ -308,7 +308,10 @@ fn padding_report() {
         ],
     )
     .unwrap();
-    assert_ne!(u16::from_le_bytes([bytes[2], bytes[3]]) & PACKED_LAYOUT_FLAG, 0);
+    assert_ne!(
+        u16::from_le_bytes([bytes[2], bytes[3]]) & PACKED_LAYOUT_FLAG,
+        0
+    );
     let now = bytes.len();
     let before = now + padded.fixed_data_size - packed.fixed_data_size;
     // A page holds rows plus an 8-byte slot each, after its 8-byte header.
@@ -378,13 +381,18 @@ fn part1_format(rows: usize, repeats: usize) {
         repeats, hot, passes
     );
     println!("  format   = RookDB layout, column offset from the schema (RowLayout)");
-    println!("  decoder  = the engine's path: RowDecoder::only([col]), a full-width row of NULLs + 1 value");
+    println!(
+        "  decoder  = the engine's path: RowDecoder::only([col]), a full-width row of NULLs + 1 value"
+    );
     println!("  baseline = declared order, [u16 len] before each VARCHAR, walk to the column\n");
     println!(
         "{:<34} {:>8} {:>8} {:>9}   {:>10}",
         "read one column", "format", "decoder", "baseline", "format vs"
     );
-    println!("{:<34} {:>8} {:>8} {:>9}   {:>10}", "", "", "", "", "baseline");
+    println!(
+        "{:<34} {:>8} {:>8} {:>9}   {:>10}",
+        "", "", "", "", "baseline"
+    );
 
     let mut out = Vec::with_capacity(schema.len());
     let mut row_case = |label: String, col: usize| {
@@ -541,7 +549,10 @@ fn part2_engine(rows: usize, repeats: usize) {
                 format!("({})", vals.join(", "))
             })
             .collect();
-        run(&mut s, &format!("INSERT INTO w VALUES {}", values.join(", ")));
+        run(
+            &mut s,
+            &format!("INSERT INTO w VALUES {}", values.join(", ")),
+        );
     }
     storage_manager::backend::cache::checkpoint_durable().expect("checkpoint");
 
@@ -575,7 +586,13 @@ fn part2_engine(rows: usize, repeats: usize) {
         let all = ms(repeats, &mut s, sql);
         let n_all = run(&mut s, sql);
         assert_eq!(n_pruned, n_all, "{}: same result either way", sql);
-        println!("{:<44} {:>10.2} {:>10.2} {:>8.2}x", sql, pruned, all, all / pruned);
+        println!(
+            "{:<44} {:>10.2} {:>10.2} {:>8.2}x",
+            sql,
+            pruned,
+            all,
+            all / pruned
+        );
     }
     engine.set_decode_all_columns(false);
 

@@ -82,7 +82,10 @@ fn main() {
         let values: Vec<String> = (start..start + 500)
             .map(|k| format!("({}, {})", k, v_of(k)))
             .collect();
-        run(&mut a, &format!("INSERT INTO p VALUES {}", values.join(", ")));
+        run(
+            &mut a,
+            &format!("INSERT INTO p VALUES {}", values.join(", ")),
+        );
     }
     storage_manager::backend::cache::checkpoint_durable().expect("checkpoint");
 
