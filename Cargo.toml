@@ -46,3 +46,11 @@ path = "src/bin/join_bench.rs"
 [[bin]]
 name = "constraint_bench"
 path = "src/bin/constraint_bench.rs"
+
+[[bin]]
+name = "tuple_bench"
+path = "src/bin/tuple_bench.rs"
+
+[[bin]]
+name = "session_bench"
+path = "src/bin/session_bench.rs"
